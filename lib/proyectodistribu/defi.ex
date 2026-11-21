@@ -6,6 +6,24 @@ defmodule Proyectodistribu.Defi do
   def conectar(nodo) do
     Node.connect(nodo)
   end
+  def descubrir(ip, prefijo) do
+    for vecino <- vecinos(ip, prefijo) do
+      spawn(fn -> conectar(String.to_atom("doc@" <> vecino)) end)
+    end
+    :ok
+  end
+  def vecinos(ip, prefijo) do
+    [a, b, c, d] = Enum.map(String.split(ip, "."), fn x -> String.to_integer(x) end)
+    if prefijo < 24 do
+      []
+    else
+      tamano = Integer.pow(2, 32 - prefijo)
+      base = d - rem(d, tamano)
+      for x <- (base + 1)..(base + tamano - 2), x != d do
+        Enum.join([a, b, c, x], ".")
+      end
+    end
+  end
   def broadcast(mensaje) do
     GenServer.cast(__MODULE__, {:broadcast, mensaje})
   end

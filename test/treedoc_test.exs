@@ -133,6 +133,24 @@ defmodule CpdDoc.TreedocTest do
     assert Treedoc.texto(Treedoc.merge(charlie, alice)) == "Hello Alice Charlie!"
   end
 
+  test "sin intercalado sin importar quién escribió la base" do
+    for autor <- [{:base, 1}, {:alice, 1}, {:charlie, 1}] do
+      base = escribir(Treedoc.nuevo(), 0, "Hello!", autor)
+      inicio_alice = if autor == {:alice, 1}, do: base, else: Treedoc.merge(Treedoc.nuevo(), base)
+
+      inicio_charlie =
+        if autor == {:charlie, 1}, do: base, else: Treedoc.merge(Treedoc.nuevo(), base)
+
+      alice = escribir(inicio_alice, 5, " Alice", {:alice, 1})
+      charlie = escribir(inicio_charlie, 5, " Charlie", {:charlie, 1})
+      t1 = Treedoc.texto(Treedoc.merge(alice, charlie))
+      t2 = Treedoc.texto(Treedoc.merge(charlie, alice))
+
+      assert t1 == t2
+      assert t1 in ["Hello Alice Charlie!", "Hello Charlie Alice!"]
+    end
+  end
+
   test "inserción local: 2000 inserciones y borrados aleatorios coinciden con un String" do
     letras = String.graphemes("abcdefghijklmnopqrstuvwxyz ")
 
