@@ -4,7 +4,7 @@ defmodule CpdDoc.Treedoc do
   end
 
   def nuevo() do
-    Map.put(vacio(), :contador, 0)
+    Map.merge(vacio(), %{contador: 0, ultimo: nil})
   end
 
   def menor?([], []) do
@@ -39,10 +39,6 @@ defmodule CpdDoc.Treedoc do
     Enum.map_join(visibles(doc), fn {_, caracter} -> caracter end)
   end
 
-  # Limitación: no se implementa el balanceo de la sección 4.1 de Treedoc.
-  # Cada PosID nuevo se cuelga como hijo de un vecino, así que al escribir
-  # siempre al final cada letra queda como hijo derecho de la anterior y los
-  # caminos crecen una posición por letra escrita.
   def nuevo_posid(:inicio, :fin, dis) do
     [{1, dis}]
   end
@@ -63,6 +59,43 @@ defmodule CpdDoc.Treedoc do
     end
   end
 
+  # Balanceo de la sección 4.1 de Treedoc. Cuando se sigue escribiendo justo
+  # después de la última letra insertada en esta réplica (doc.ultimo), en vez de
+  # colgar la letra como hijo derecho de la anterior, el árbol crece niveles(h)
+  # niveles de una vez (h = largo de p) y la letra toma la posición más pequeña de
+  # ese subárbol. Las letras siguientes de la racha ocupan las posiciones vacías
+  # del subárbol en orden infijo. Todos los pasos del subárbol llevan el
+  # desambiguador de la letra que lo creó y solo el sitio dueño lo llena, así que
+  # dos réplicas nunca crean el mismo PosID. Una inserción suelta usa nuevo_posid,
+  # porque crecer varios niveles por una sola letra alargaría los caminos.
+  # Limitaciones: no se implementa flatten, porque necesita un commit distribuido
+  # entre todos los nodos, y escribir hacia atrás (siempre en la misma posición)
+  # sigue creciendo un paso por letra.
+  def posid_para(doc, p, f, dis) do
+    {_, sitio} = dis
+
+    if p == :inicio or p != doc.ultimo or (f != :fin and prefijo?(p, f)) do
+      nuevo_posid(p, f, dis)
+    else
+      hueco = siguiente_hueco(p, sitio)
+
+      if hueco != nil and not Map.has_key?(doc.atomos, hueco) and menor?(p, hueco) and
+           (f == :fin or menor?(hueco, f)) do
+        hueco
+      else
+        crecer(p, dis)
+      end
+    end
+  end
+
+  def niveles(h) do
+    if h <= 1 do
+      1
+    else
+      techo_log2(h, 0) + 1
+    end
+  end
+
   def insertar(doc, i, caracter, sitio) do
     orden = orden(doc)
     visibles = sin_borrados(orden, doc.borrados)
@@ -78,9 +111,9 @@ defmodule CpdDoc.Treedoc do
         p = anterior(visibles, i)
         f = siguiente(orden, p)
         contador = doc.contador + 1
-        posid = nuevo_posid(p, f, {contador, sitio})
+        posid = posid_para(doc, p, f, {contador, sitio})
         delta = %{vacio() | atomos: %{posid => caracter}}
-        {%{merge(doc, delta) | contador: contador}, delta}
+        {%{merge(doc, delta) | contador: contador, ultimo: posid}, delta}
     end
   end
 
@@ -129,6 +162,47 @@ defmodule CpdDoc.Treedoc do
     case Enum.drop_while(orden, fn {q, _} -> q != p end) do
       [_, {f, _} | _] -> f
       _ -> :fin
+    end
+  end
+
+  defp crecer(p, dis) do
+    p ++ [{1, dis}] ++ List.duplicate({0, dis}, niveles(length(p)) - 1)
+  end
+
+  defp siguiente_hueco(p, sitio) do
+    {_, d} = List.last(p)
+    {_, dueno} = d
+    {prefijo, propio} = Enum.split_while(p, fn {_, x} -> x != d end)
+
+    case propio do
+      [{1, _} | rel] ->
+        if dueno == sitio and Enum.all?(rel, fn {_, x} -> x == d end) do
+          sucesor(prefijo ++ [{1, d}], rel, d, niveles(length(prefijo)))
+        else
+          nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp sucesor(raiz, rel, d, k) do
+    if length(rel) < k - 1 do
+      raiz ++ rel ++ [{1, d}] ++ List.duplicate({0, d}, k - 2 - length(rel))
+    else
+      case Enum.drop_while(Enum.reverse(rel), fn {bit, _} -> bit == 1 end) do
+        [] -> nil
+        [_ | resto] -> raiz ++ Enum.reverse(resto)
+      end
+    end
+  end
+
+  defp techo_log2(h, k) do
+    if Integer.pow(2, k) >= h do
+      k
+    else
+      techo_log2(h, k + 1)
     end
   end
 

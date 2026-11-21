@@ -63,6 +63,8 @@ def menor?([x | _], [y | _]), do: x < y
 
 Only the order and the message format need to match. These rules are just how we make posids, and any rule that puts the new posid between `p` and `f` and never repeats one works too.
 
+When a node keeps typing right after its own last character, we also use the balancing from section 4.1 of the Treedoc paper. The tree grows `ceil(log2(length(p))) + 1` levels at once, and the next characters fill the empty slots of that subtree in infix order. Every step of such a subtree carries the `dis` of the character that created it. If you do the same, only fill slots whose `dis` has your own `{node, incarnation}`, so two nodes never mint the same posid.
+
 ## Still open
 
 - `char` limited to one grapheme?

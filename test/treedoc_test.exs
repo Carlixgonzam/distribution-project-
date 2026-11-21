@@ -173,6 +173,63 @@ defmodule CpdDoc.TreedocTest do
     assert Treedoc.texto(doc) == cadena
   end
 
+  test "balanceo 4.1: escribir 2000 letras al final no crece un paso por letra" do
+    doc = escribir(Treedoc.nuevo(), 0, String.duplicate("ab", 1000), {:a, 1})
+    largos = Enum.map(Map.keys(doc.atomos), fn p -> length(p) end)
+
+    assert Treedoc.texto(doc) == String.duplicate("ab", 1000)
+    assert map_size(doc.atomos) == 2000
+    assert Enum.max(largos) < 150
+  end
+
+  test "balanceo 4.1: el subárbol se llena en orden infijo" do
+    d1 = {1, {:a, 1}}
+    d2 = {2, {:a, 1}}
+    d3 = {3, {:a, 1}}
+    doc = escribir(Treedoc.nuevo(), 0, "xyzwv", {:a, 1})
+    posids = Enum.map(Treedoc.visibles(doc), fn {p, _} -> p end)
+
+    assert posids == [
+             [{1, d1}],
+             [{1, d1}, {1, d2}],
+             [{1, d1}, {1, d2}, {1, d3}, {0, d3}],
+             [{1, d1}, {1, d2}, {1, d3}],
+             [{1, d1}, {1, d2}, {1, d3}, {1, d3}]
+           ]
+  end
+
+  test "balanceo 4.1: solo el dueño llena los huecos de su subárbol" do
+    alice = escribir(Treedoc.nuevo(), 0, "abc", {:alice, 1})
+    {bob, delta} = Treedoc.insertar(Treedoc.merge(Treedoc.nuevo(), alice), 3, "d", {:bob, 1})
+    [posid] = Map.keys(delta.atomos)
+
+    assert {_, {_, {:bob, 1}}} = List.last(posid)
+    assert Treedoc.texto(bob) == "abcd"
+  end
+
+  test "balanceo 4.1: dos réplicas escribiendo al final a la vez no repiten ni se intercalan" do
+    for _ <- 1..50 do
+      base = escribir(Treedoc.nuevo(), 0, "hola", {:base, 1})
+      n1 = Enum.random(1..40)
+      n2 = Enum.random(1..40)
+      a = escribir(Treedoc.merge(Treedoc.nuevo(), base), 4, String.duplicate("a", n1), {:a, 1})
+      b = escribir(Treedoc.merge(Treedoc.nuevo(), base), 4, String.duplicate("b", n2), {:b, 1})
+      ab = Treedoc.merge(a, b)
+
+      assert map_size(ab.atomos) == 4 + n1 + n2
+      assert Treedoc.texto(ab) == Treedoc.texto(Treedoc.merge(b, a))
+      assert Treedoc.texto(ab) == "hola" <> String.duplicate("a", n1) <> String.duplicate("b", n2)
+    end
+  end
+
+  test "balanceo 4.1: los PosID nuevos siguen pasando la validación del protocolo" do
+    doc = escribir(Treedoc.nuevo(), 0, String.duplicate("x", 300), {:"doc@172.20.10.3", 42})
+    doc = escribir(doc, 150, String.duplicate("y", 100), {:"doc@172.20.10.3", 42})
+
+    assert {:ok, leido} = CpdDoc.Protocolo.leer(CpdDoc.Protocolo.mensaje(doc))
+    assert leido.atomos == doc.atomos
+  end
+
   test "posiciones y caracteres inválidos" do
     {doc, _} = Treedoc.insertar(Treedoc.nuevo(), 0, "a", {:a, 1})
 
