@@ -230,6 +230,15 @@ defmodule CpdDoc.TreedocTest do
     assert leido.atomos == doc.atomos
   end
 
+  test "un PosID con dos letras distintas converge igual en cualquier orden" do
+    paso = {1, {1, {:"doc@172.20.10.3", 7}}}
+    a = Treedoc.merge(Treedoc.nuevo(), %{atomos: %{[paso] => "x"}, borrados: MapSet.new()})
+    b = Treedoc.merge(Treedoc.nuevo(), %{atomos: %{[paso] => "y"}, borrados: MapSet.new()})
+
+    assert Treedoc.texto(Treedoc.merge(a, b)) == "y"
+    assert Treedoc.texto(Treedoc.merge(b, a)) == "y"
+  end
+
   test "posiciones y caracteres inválidos" do
     {doc, _} = Treedoc.insertar(Treedoc.nuevo(), 0, "a", {:a, 1})
 

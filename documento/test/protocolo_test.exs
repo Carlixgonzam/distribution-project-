@@ -15,6 +15,45 @@ defmodule CpdDoc.ProtocoloTest do
     assert leido.borrados == doc.borrados
   end
 
+  test "vectores de prueba de PROTOCOL.md" do
+    a = fn c -> {c, {:a, 1}} end
+
+    v1 = [
+      {[{1, a.(1)}], "c"},
+      {[{1, a.(1)}, {0, a.(2)}], "b"},
+      {[{1, a.(1)}, {1, a.(3)}], "d"},
+      {[{1, a.(1)}, {0, a.(2)}, {0, a.(4)}], "a"}
+    ]
+
+    v2 = [
+      {[{1, a.(2)}], "Z"},
+      {[{1, {1, {:b, 1}}}], "Y"},
+      {[{1, a.(1)}, {1, a.(5)}], "x"},
+      {[{1, a.(1)}], "X"}
+    ]
+
+    assert texto(v1, []) == "abcd"
+    assert texto(v2, []) == "XxYZ"
+    assert texto(v1, [[{1, a.(1)}, {0, a.(2)}]]) == "acd"
+    assert texto([], [[{1, a.(9)}]]) == ""
+    assert texto([{[{1, a.(9)}], "q"}], [[{1, a.(9)}]]) == ""
+    assert texto([{[{1, a.(1)}], "x"}, {[{1, a.(1)}], "y"}], []) == "y"
+  end
+
+  defp texto(atomos, borrados) do
+    {:ok, delta} = Protocolo.leer({:cpd, 1, :t, {:estado, atomos, borrados}})
+    Treedoc.texto(Treedoc.merge(Treedoc.nuevo(), delta))
+  end
+
+  test "un PosID repetido dentro del mismo mensaje no depende del orden" do
+    paso = {1, {1, {:a, 1}}}
+    {:ok, d1} = Protocolo.leer({:cpd, 1, :a, {:estado, [{[paso], "x"}, {[paso], "y"}], []}})
+    {:ok, d2} = Protocolo.leer({:cpd, 1, :a, {:estado, [{[paso], "y"}, {[paso], "x"}], []}})
+
+    assert d1.atomos == %{[paso] => "y"}
+    assert d2.atomos == %{[paso] => "y"}
+  end
+
   test "formas y versiones desconocidas se rechazan" do
     paso = {1, {1, {:a, 1}}}
 

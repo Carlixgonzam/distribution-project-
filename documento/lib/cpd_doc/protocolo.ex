@@ -15,7 +15,7 @@ defmodule CpdDoc.Protocolo do
 
   def leer({:cpd, 1, origen, {:estado, atomos, borrados}}) when is_atom(origen) do
     if atomos?(atomos) and posids?(borrados) do
-      {:ok, %{atomos: Map.new(atomos), borrados: MapSet.new(borrados)}}
+      {:ok, %{atomos: juntar(atomos), borrados: MapSet.new(borrados)}}
     else
       :error
     end
@@ -23,6 +23,12 @@ defmodule CpdDoc.Protocolo do
 
   def leer(_) do
     :error
+  end
+
+  defp juntar(atomos) do
+    Enum.reduce(atomos, %{}, fn {posid, caracter}, acc ->
+      Map.update(acc, posid, caracter, fn otro -> max(otro, caracter) end)
+    end)
   end
 
   defp atomos?([]) do

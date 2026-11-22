@@ -132,7 +132,7 @@ defmodule CpdDoc.Treedoc do
   def merge(a, b) do
     %{
       a
-      | atomos: Map.merge(a.atomos, b.atomos),
+      | atomos: Map.merge(a.atomos, b.atomos, fn _posid, x, y -> max(x, y) end),
         borrados: MapSet.union(a.borrados, b.borrados)
     }
   end
