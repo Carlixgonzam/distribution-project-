@@ -38,6 +38,34 @@ defmodule CpdDoc.ProtocoloTest do
     assert texto([], [[{1, a.(9)}]]) == ""
     assert texto([{[{1, a.(9)}], "q"}], [[{1, a.(9)}]]) == ""
     assert texto([{[{1, a.(1)}], "x"}, {[{1, a.(1)}], "y"}], []) == "y"
+    assert texto(figura_3(), []) == "abcWYZdef"
+    assert texto(figura_4(), []) == "abcWXYZdef"
+  end
+
+  defp figura_3() do
+    c = [{1, {1, {:c, 1}}}]
+    b = c ++ [{0, {1, {:b, 1}}}]
+    e = c ++ [{1, {1, {:e, 1}}}]
+    d = e ++ [{0, {1, {:d, 1}}}]
+    w = d ++ [{0, {1, {:w, 1}}}]
+    y = d ++ [{0, {1, {:y, 1}}}]
+
+    [
+      {c, "c"},
+      {b, "b"},
+      {b ++ [{0, {1, {:a, 1}}}], "a"},
+      {e, "e"},
+      {d, "d"},
+      {e ++ [{1, {1, {:f, 1}}}], "f"},
+      {w, "W"},
+      {y, "Y"},
+      {y ++ [{1, {1, {:z, 1}}}], "Z"}
+    ]
+  end
+
+  defp figura_4() do
+    {w, "W"} = Enum.find(figura_3(), fn {_posid, caracter} -> caracter == "W" end)
+    [{w ++ [{1, {1, {:x, 1}}}], "X"} | figura_3()]
   end
 
   defp texto(atomos, borrados) do

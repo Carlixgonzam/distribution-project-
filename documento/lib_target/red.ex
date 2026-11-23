@@ -14,7 +14,7 @@ defmodule CpdDoc.Red do
 
   def handle_info(:buscar, estado) do
     if estado.ip != nil and Node.alive?() do
-      Proyectodistribu.Defi.descubrir(estado.ip, estado.prefijo)
+      CpdDoc.Descubrimiento.descubrir(estado.ip, estado.prefijo)
     end
 
     Process.send_after(self(), :buscar, 10_000)

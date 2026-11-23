@@ -1,8 +1,11 @@
 defmodule CpdDoc.Replica do
   use GenServer
 
+  alias CpdDoc.Disco
   alias CpdDoc.Protocolo
   alias CpdDoc.Treedoc
+
+  @guardar_cada 5_000
 
   def start_link(_) do
     GenServer.start_link(__MODULE__, :ok, name: :cpd_doc)
@@ -23,7 +26,16 @@ defmodule CpdDoc.Replica do
   def init(:ok) do
     :net_kernel.monitor_nodes(true)
     Process.send_after(self(), :difundir, 30_000)
-    {:ok, %{doc: Treedoc.nuevo(), encarnacion: :rand.uniform(1_000_000_000)}}
+    Process.send_after(self(), :guardar, @guardar_cada)
+    archivo = Application.get_env(:cpd_doc, :archivo)
+
+    {:ok,
+     %{
+       doc: Treedoc.merge(Treedoc.nuevo(), Disco.cargar(archivo)),
+       encarnacion: :rand.uniform(1_000_000_000),
+       archivo: archivo,
+       sucio: false
+     }}
   end
 
   def handle_call({:insertar, i, caracter}, _de, estado) do
@@ -45,7 +57,7 @@ defmodule CpdDoc.Replica do
 
   def handle_info({:cpd, version, origen, cuerpo}, estado) do
     case Protocolo.leer({:cpd, version, origen, cuerpo}) do
-      {:ok, delta} -> {:noreply, %{estado | doc: Treedoc.merge(estado.doc, delta)}}
+      {:ok, delta} -> {:noreply, cambiar(estado, Treedoc.merge(estado.doc, delta))}
       :error -> {:noreply, estado}
     end
   end
@@ -61,6 +73,23 @@ defmodule CpdDoc.Replica do
     {:noreply, estado}
   end
 
+  def handle_info(:guardar, estado) do
+    Process.send_after(self(), :guardar, @guardar_cada)
+
+    if estado.sucio do
+      case Disco.guardar(estado.archivo, estado.doc) do
+        :ok ->
+          {:noreply, %{estado | sucio: false}}
+
+        {:error, razon} ->
+          IO.puts("no se pudo guardar el documento: #{inspect(razon)}")
+          {:noreply, estado}
+      end
+    else
+      {:noreply, estado}
+    end
+  end
+
   def handle_info(_otro, estado) do
     {:noreply, estado}
   end
@@ -71,6 +100,11 @@ defmodule CpdDoc.Replica do
 
   defp aplicar_local({doc, delta}, estado) do
     Protocolo.difundir(delta)
-    {:reply, :ok, %{estado | doc: doc}}
+    {:reply, :ok, cambiar(estado, doc)}
+  end
+
+  defp cambiar(estado, doc) do
+    cambio = doc.atomos != estado.doc.atomos or doc.borrados != estado.doc.borrados
+    %{estado | doc: doc, sucio: estado.sucio or cambio}
   end
 end

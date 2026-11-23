@@ -10,7 +10,8 @@ What every group has to match so all nodes edit one document. Anything not liste
 - Node name: `doc@<ipv4>`, e.g. `doc@172.20.10.3`. Long names only (`--name`, never `--sname`).
 - Cookie: `cpd2026`.
 - Connecting to any one node is enough, Erlang connects you to the rest. Our Pis also try `Node.connect` on every hotspot address every 10 s.
-- From a laptop: `iex --name doc@<your ip> --cookie cpd2026 -S mix`, then `Node.connect(:"doc@<ip of any node>")`.
+- From a laptop: `iex --name doc@<your ip> --cookie cpd2026 --erl "-kernel prevent_overlapping_partitions false" -S mix`, then `Node.connect(:"doc@<ip of any node>")`.
+- Recommended: start every node with `-kernel prevent_overlapping_partitions false`. With the OTP default (`true`), when one link drops `global` also cuts the node's other connections and it stays alone until something reconnects it. Nothing here uses global names, so there is nothing to protect.
 
 ## Process
 
@@ -60,7 +61,19 @@ def menor?([x | r1], [x | r2]), do: menor?(r1, r2)
 def menor?([x | _], [y | _]), do: x < y
 ```
 
-This is an in-order walk of a binary tree where every step carries a disambiguator. Children with the same bit are ordered by `{counter, {node, incarnation}}`, counter first.
+This is the infix order of section 3.1 of the Treedoc paper. A posid is a path from a virtual root, and each step is `{bit, disambiguator}`: 0 goes left, 1 goes right. Steps with the same bit are mini-nodes of one major node, ordered by `{counter, {node, incarnation}}`, counter first. The five clauses are the paper's three cases:
+
+- `id1` is a prefix of `id2` and `id2` continues with bit 1: `id1 < id2` (clause 2).
+- `id2` is a prefix of `id1` and `id1` continues with bit 0: `id1 < id2` (clause 3).
+- otherwise compare the first step where they differ (clause 5). With equal bits, the disambiguator decides.
+
+One difference with the paper: we put a disambiguator on every step, not only where it is needed, so every step names one mini-node. The order is still total and dense, and comparing is a plain list walk. V6 and V7 below are Figures 3 and 4 of the paper written this way.
+
+## Deleting
+
+- Deleting adds the posid to the tombstones. The atom stays, because the next new posid is computed from the full order, tombstones included.
+- Tombstones are never removed and a deleted character never comes back.
+- A tombstone counts even if its atom hasn't arrived yet (V4). Deleting twice is the same as deleting once.
 
 ## New posids
 
@@ -114,9 +127,30 @@ tombstones = [[{1, {9, {:a, 1}}}]]
 atoms = [{[{1, {1, {:a, 1}}}], "x"}, {[{1, {1, {:a, 1}}}], "y"}]
 tombstones = []
 # => "y"
+
+# V6, Figure 3 of the paper: W and Y inserted at the same time between c and d
+c = [{1, {1, {:c, 1}}}]
+b = c ++ [{0, {1, {:b, 1}}}]
+e = c ++ [{1, {1, {:e, 1}}}]
+d = e ++ [{0, {1, {:d, 1}}}]
+w = d ++ [{0, {1, {:w, 1}}}]
+y = d ++ [{0, {1, {:y, 1}}}]
+atoms = [
+  {c, "c"}, {b, "b"}, {b ++ [{0, {1, {:a, 1}}}], "a"},
+  {e, "e"}, {d, "d"}, {e ++ [{1, {1, {:f, 1}}}], "f"},
+  {w, "W"}, {y, "Y"}, {y ++ [{1, {1, {:z, 1}}}], "Z"}
+]
+tombstones = []
+# => "abcWYZdef"
+
+# V7, Figure 4: V6 plus X between the mini-siblings W and Y
+atoms = [{w ++ [{1, {1, {:x, 1}}}], "X"} | atoms]
+# => "abcWXYZdef"
 ```
+
+Our implementation passes all seven in `documento/test/protocolo_test.exs`. Why this converges is in [documento/CRDT.md](documento/CRDT.md).
 
 ## Still open
 
 - 30 s for the full-state resend, or longer if the hotspot gets slow?
-- Discovery by mDNS and the API exchange belong to the other assignment (ad hoc). We'll send a separate proposal for those.
+- Discovery by mDNS and the API exchange belong to the other assignment, see [adhoc/PROTOCOL.md](adhoc/PROTOCOL.md).

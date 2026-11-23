@@ -239,6 +239,50 @@ defmodule CpdDoc.TreedocTest do
     assert Treedoc.texto(Treedoc.merge(b, a)) == "y"
   end
 
+  test "δ-mutadores: cada operación local es X ⊔ delta, infla el estado y no repite PosID" do
+    for _ <- 1..200 do
+      sitios = %{1 => {:a, 1}, 2 => {:b, 1}, 3 => {:c, 1}}
+      replicas = %{1 => Treedoc.nuevo(), 2 => Treedoc.nuevo(), 3 => Treedoc.nuevo()}
+
+      {_replicas, deltas} =
+        Enum.reduce(1..15, {replicas, []}, fn _, {replicas, deltas} ->
+          k = Enum.random(1..3)
+          {doc, nuevos} = racha(recibir_alguno(replicas[k], deltas), sitios[k])
+          {Map.put(replicas, k, doc), nuevos ++ deltas}
+        end)
+
+      posids = Enum.flat_map(deltas, fn delta -> Map.keys(delta.atomos) end)
+      assert length(posids) == length(Enum.uniq(posids))
+    end
+  end
+
+  defp racha(doc, sitio) do
+    n = length(Treedoc.visibles(doc))
+
+    if n > 0 and :rand.uniform(4) == 1 do
+      {nuevo, delta} = Treedoc.borrar(doc, Enum.random(0..(n - 1)))
+      assert MapSet.size(delta.borrados) == 1 and delta.atomos == %{}
+      revisar_mutador(doc, nuevo, delta)
+      {nuevo, [delta]}
+    else
+      i = Enum.random(0..n)
+
+      Enum.reduce(0..(Enum.random(1..6) - 1), {doc, []}, fn j, {x, deltas} ->
+        {nuevo, delta} = Treedoc.insertar(x, i + j, "a", sitio)
+        [posid] = Map.keys(delta.atomos)
+        refute Map.has_key?(x.atomos, posid)
+        assert delta.borrados == MapSet.new()
+        revisar_mutador(x, nuevo, delta)
+        {nuevo, [delta | deltas]}
+      end)
+    end
+  end
+
+  defp revisar_mutador(x, nuevo, delta) do
+    assert contenido(Treedoc.merge(x, delta)) == contenido(nuevo)
+    assert contenido(Treedoc.merge(x, nuevo)) == contenido(nuevo)
+  end
+
   test "posiciones y caracteres inválidos" do
     {doc, _} = Treedoc.insertar(Treedoc.nuevo(), 0, "a", {:a, 1})
 

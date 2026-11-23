@@ -7,7 +7,7 @@ defmodule CpdDoc.Application do
 
   @impl true
   def start(_type, _args) do
-    children = [Proyectodistribu.Defi, CpdDoc.Replica] ++ target_children()
+    children = [CpdDoc.Descubrimiento, CpdDoc.Replica] ++ target_children()
 
     # See https://elixir.hexdocs.pm/Supervisor.html
     # for other strategies and supported options
