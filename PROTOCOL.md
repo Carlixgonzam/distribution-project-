@@ -12,6 +12,7 @@ All the groups edit one document with the op-based Treedoc contract of the class
 - Cookie `cpd2026`, long names (`--name name@IPv4`, never `--sname`, never `.local`).
 - Ports: TCP 4369 (epmd), TCP 4218 to 4228 (distribution), UDP 45892 (discovery). Laptops have to allow them in their firewall.
 - Start every node with `-kernel prevent_overlapping_partitions false`. With the OTP default, when one link drops `global` also cuts the node's other links. Nothing here uses global names.
+- Keep `net_ticktime` at the OTP default, 60 s, on every node: don't pass it to `Node.start/2` or `:net_kernel.start/2`, and don't set `-kernel net_ticktime`. Erlang doesn't agree on it between nodes. A node with 10 s expects a sign of life every few seconds, while one with 60 s only sends one every 15 s when idle, so after 10 s without edits the first one drops the second. We saw it between nodes with 10 and nodes with 60.
 
 ## Node names
 

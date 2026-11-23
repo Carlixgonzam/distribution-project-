@@ -53,4 +53,28 @@ defmodule CpdDoc.MensajeTest do
       assert Mensaje.leer(m) == :error, inspect(m)
     end
   end
+
+  test "20 000 entradas al azar nunca lanzan error y lo aceptado vuelve a pasar la validación" do
+    for _ <- 1..20_000 do
+      entrada = CpdDoc.Azar.mensaje()
+
+      case Mensaje.leer(entrada) do
+        :error -> :ok
+        {:ok, op} -> assert Mensaje.leer(op) == {:ok, op}
+      end
+
+      case entrada do
+        {:remote, op} -> Mensaje.leer(op)
+        _ -> :ok
+      end
+    end
+  end
+
+  test "un carácter gigante se rechaza sin recorrerlo" do
+    enorme = String.duplicate("a", 50_000_000)
+    {microsegundos, resultado} = :timer.tc(fn -> Mensaje.leer(%{@ins | ch: enorme}) end)
+
+    assert resultado == :error
+    assert microsegundos < 10_000
+  end
 end

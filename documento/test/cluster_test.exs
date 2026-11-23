@@ -163,4 +163,100 @@ defmodule CpdDoc.ClusterTest do
     assert [{^otro, 3, %{^otro => 2}}] = estado.en_espera
     assert estado.ignoradas == 4
   end
+
+  test "1500 mensajes basura desde otro nodo no la tumban y todo sigue convergiendo", c do
+    malla(c)
+    replica = llamar(c.pa, Process, :whereis, [Crdt.Replica])
+
+    for _ <- 1..1_500 do
+      m = CpdDoc.Azar.mensaje()
+      :ok = llamar(c.pb, GenServer, :cast, [{Crdt.Replica, c.a}, m])
+      llamar(c.pb, Kernel, :send, [{Crdt.Replica, c.a}, m])
+    end
+
+    :ok = llamar(c.pa, CpdDoc, :insertar, [0, "sigo vivo"])
+    assert eventualmente(fn -> iguales?(c.todos, "sigo vivo") end)
+    assert llamar(c.pa, Process, :whereis, [Crdt.Replica]) == replica
+  end
+
+  test "pegar 3000 caracteres llega igual a todos", c do
+    malla(c)
+    texto = String.duplicate("0123456789", 300)
+    :ok = llamar(c.pa, CpdDoc, :insertar, [0, texto])
+    :ok = llamar(c.pb, CpdDoc, :insertar, [1500, "[b]"])
+
+    esperado = String.slice(texto, 0, 1500) <> "[b]" <> String.slice(texto, 1500, 3000)
+    assert eventualmente(fn -> iguales?(c.todos, esperado) end)
+  end
+
+  test "la réplica matada a la fuerza vuelve sola y se pone al día", c do
+    malla(c)
+    :ok = llamar(c.pa, CpdDoc, :insertar, [0, "ab"])
+    assert eventualmente(fn -> iguales?(c.todos, "ab") end)
+
+    vieja = llamar(c.pb, Process, :whereis, [Crdt.Replica])
+    true = llamar(c.pb, Process, :exit, [vieja, :kill])
+    :ok = llamar(c.pa, CpdDoc, :insertar, [2, "cd"])
+    :ok = llamar(c.pc, CpdDoc, :insertar, [0, ">"])
+
+    assert eventualmente(fn ->
+             llamar(c.pb, Process, :whereis, [Crdt.Replica]) not in [nil, vieja]
+           end)
+
+    assert eventualmente(fn -> iguales?(c.todos, ">abcd") end)
+    :ok = llamar(c.pb, CpdDoc, :insertar, [5, "!"])
+    assert eventualmente(fn -> iguales?(c.todos, ">abcd!") end)
+  end
+
+  test "como la Pi: edita sin red tras perder la distribución y lo envía al volver", c do
+    pi = CpdDoc.Nodos.iniciar_sin_nombre(:pi, c.dir)
+    on_exit(fn -> :peer.stop(pi) end)
+    nombre = :"pi#{System.unique_integer([:positive])}@127.0.0.1"
+    unir(c.pa, c.b)
+
+    assert llamar(pi, CpdDoc, :insertar, [0, "x"]) == {:error, :sin_red}
+    :ok = llamar(pi, CpdDoc.Nodos, :distribuir, [nombre])
+    true = llamar(pi, Node, :connect, [c.a])
+    assert eventualmente(fn -> llamar(pi, CpdDoc, :estado).autor == nombre end)
+
+    :ok = llamar(pi, Node, :stop, [])
+    :ok = llamar(pi, CpdDoc, :insertar, [0, "sin red"])
+    :ok = llamar(c.pa, CpdDoc, :insertar, [0, "a: "])
+    assert llamar(pi, CpdDoc, :texto) == "sin red"
+
+    :ok = llamar(pi, CpdDoc.Nodos, :distribuir, [nombre])
+    true = llamar(pi, Node, :connect, [c.a])
+    assert eventualmente(fn -> iguales?([pi, c.pa, c.pb]) end)
+    assert llamar(c.pb, CpdDoc, :texto) =~ "sin red"
+    assert llamar(c.pb, CpdDoc, :texto) =~ "a: "
+  end
+
+  test "estrés: tres nodos editan a la vez mientras las conexiones se cortan y vuelven", c do
+    malla(c)
+
+    editores =
+      for pid <- c.todos do
+        Task.async(fn -> llamar(pid, CpdDoc.Nodos, :editar_al_azar, [80]) end)
+      end
+
+    pares = [{c.pa, c.b}, {c.pa, c.c}, {c.pb, c.c}]
+
+    for _ <- 1..15 do
+      {pid, nodo} = Enum.random(pares)
+      separar(pid, nodo)
+      Process.sleep(:rand.uniform(60))
+      llamar(pid, Node, :connect, [nodo])
+    end
+
+    for editor <- editores do
+      :ok = Task.await(editor, 60_000)
+    end
+
+    malla(c)
+    assert eventualmente(fn -> iguales?(c.todos) end)
+
+    for pid <- c.todos do
+      assert llamar(pid, CpdDoc, :estado).en_espera == []
+    end
+  end
 end

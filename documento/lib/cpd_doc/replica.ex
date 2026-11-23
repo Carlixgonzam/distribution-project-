@@ -74,6 +74,10 @@ defmodule CpdDoc.Replica do
     {:reply, resumen, estado}
   end
 
+  def handle_call(_otra, _de, estado) do
+    {:reply, {:error, :desconocida}, estado}
+  end
+
   def handle_cast({:remote, crudo}, estado) do
     case Mensaje.leer(crudo) do
       {:ok, op} -> {:noreply, remota(op, estado)}
@@ -92,7 +96,7 @@ defmodule CpdDoc.Replica do
 
   def handle_info({:nodeup, _nodo}, estado) do
     enviar_historial(estado)
-    {:noreply, estado}
+    {:noreply, recordar_nombre(estado)}
   end
 
   def handle_info(_otro, estado) do
@@ -176,6 +180,14 @@ defmodule CpdDoc.Replica do
 
   defp reloj(ops) do
     Enum.reduce(ops, %{}, fn op, vc -> Causal.entregar(vc, op) end)
+  end
+
+  defp recordar_nombre(estado) do
+    if Node.alive?() do
+      %{estado | yo: node()}
+    else
+      estado
+    end
   end
 
   defp nombre_actual() do

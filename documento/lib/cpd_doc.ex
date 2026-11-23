@@ -33,9 +33,14 @@ defmodule CpdDoc do
     Node.connect(String.to_atom(nodo))
   end
 
+  def conectar(_nodo) do
+    {:error, :nodo_invalido}
+  end
+
   defp llamar(mensaje) do
-    GenServer.call(Mensaje.nombre(), mensaje)
+    GenServer.call(Mensaje.nombre(), mensaje, 30_000)
   catch
-    :exit, {:noproc, _} -> {:error, :sin_replica}
+    :exit, {:timeout, _} -> {:error, :tiempo_agotado}
+    :exit, _ -> {:error, :sin_replica}
   end
 end

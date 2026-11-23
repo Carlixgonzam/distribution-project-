@@ -81,4 +81,63 @@ defmodule CpdDoc.CausalTest do
       [x | resto]
     end
   end
+
+  test "historias causales al azar, desordenadas y con duplicados (1000 ejecuciones)" do
+    for _ <- 1..1000 do
+      historia = historia_al_azar()
+
+      llegadas =
+        Enum.shuffle(Enum.flat_map(historia, fn o -> List.duplicate(o, :rand.uniform(3)) end))
+
+      {vc, espera, aplicadas} = recibir_todas(llegadas)
+
+      assert espera == []
+      assert Enum.sort(aplicadas) == Enum.sort(historia)
+      assert vc == reloj_final(historia)
+      assert respeta_causalidad?(aplicadas)
+    end
+  end
+
+  defp historia_al_azar() do
+    nodos = [:a, :b, :c, :d]
+    inicial = Map.new(nodos, fn n -> {n, %{}} end)
+
+    {_relojes, historia} =
+      Enum.reduce(1..:rand.uniform(30), {inicial, []}, fn _, {relojes, historia} ->
+        n = Enum.random(nodos)
+        visto = conocer(relojes[n], historia)
+        {_seq, vc} = Causal.siguiente(visto, n)
+        {Map.put(relojes, n, vc), historia ++ [op(n, vc)]}
+      end)
+
+    historia
+  end
+
+  defp conocer(vc, []) do
+    vc
+  end
+
+  defp conocer(vc, historia) do
+    if :rand.uniform(2) == 1 do
+      otra = Enum.random(historia)
+      Map.merge(vc, otra.vc, fn _k, x, y -> max(x, y) end)
+    else
+      vc
+    end
+  end
+
+  defp reloj_final(historia) do
+    Enum.reduce(historia, %{}, fn o, vc ->
+      Map.put(vc, o.from, max(Map.get(vc, o.from, 0), o.vc[o.from]))
+    end)
+  end
+
+  defp respeta_causalidad?(aplicadas) do
+    {ok, _} =
+      Enum.reduce(aplicadas, {true, %{}}, fn o, {ok, vc} ->
+        {ok and Causal.clasificar(vc, o) == :entregable, Causal.entregar(vc, o)}
+      end)
+
+    ok
+  end
 end

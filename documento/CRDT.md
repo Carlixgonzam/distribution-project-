@@ -51,6 +51,7 @@ If a node numbered two operations the same, the others would drop the second as 
 
 - Every local edit is written to the log with one `fsync` before anything is applied or sent (`CpdDoc.Historial`). On restart the log rebuilds the document and the clock, and numbering goes on where it was.
 - A cut last line (power failure) is truncated: that operation never left the node.
+- Every line carries a CRC32 of the operation. A changed byte that still decodes into a valid operation (another char, another sequence number) fails the check and counts as damaged, instead of being loaded silently.
 - A damaged line in the middle keeps the valid prefix, moves the file aside and, on the Pi, deletes the epoch, so the node comes back with a new name. Skipping the line would leave a hole in the clock.
 - On the Pi the name is `<hostname>-<epoch>@<ip>`. Burning the SD card again deletes `/data`, log and epoch together, so the Pi comes back with a new name and starts numbering from 1 under it.
 
@@ -65,7 +66,9 @@ Tests: "reinicio: la réplica vuelve desde su log, se pone al día y sigue numer
 | `f` is in the subtree of `p` (`p` is a prefix of `f`) | `f ++ [{0, d}]` | left child of `f`: before `f`, and still in the subtree of `p` on the side of `f` |
 | otherwise | `p ++ [{1, d}]` | right child of `p`: after `p`, and the subtree of `p` ends before `f` |
 
-A text inserted in one call is placed one char after the other, on the state left by the previous one. The last step always carries the operation's own `{seq, node}`, as the contract asks.
+A text inserted in one call (a paste) is placed as a balanced subtree: the middle char goes between `p` and `f` by the table, the left half in its left subtree and the right half in its right subtree, recursively. A new subtree is empty and lies between `p` and `f`, so every char still lands there, in text order, and the depth grows by about log₂ n instead of n. The chars are numbered in text order, and each PosID ends in its own `{seq, node}`, as the contract asks. A child can arrive before its parent: the document is a map of paths, so that is fine (and the other groups' implementations accept it too, tested with `fepecas`).
+
+Without balancing, pasting 5000 chars made a 5000-step path, and sorting the document took 34 s, longer than any call waits. With it, 20 ms.
 
 Test: "insertar texto y borrar rangos coinciden con un String en 500 ediciones".
 
@@ -80,7 +83,42 @@ Tests: "sin intercalado: Alice y Charlie…" in `treedoc_test.exs`, and "escritu
 - **Discovery** (`CpdDoc.Descubrimiento`): the multicast announcement of the contract every 2 s, and on the Pi a sweep of its /24 every 10 s that asks each address's epmd which nodes it runs. Connecting to one node is enough: Erlang connects the rest.
 - **`prevent_overlapping_partitions false`.** With the OTP default, when one link drops, `global` also cuts the node's other links. We saw it with 3 nodes: when `c` dropped, `a` lost `b` too. We use no global names, so that isolation buys nothing.
 
-## 8. Why op-based
+Where the discovery values come from. The first five are the contract (`INTEGRATION.md` of `fepecas/treedoc`, level L2): changing them means we no longer find the other groups, and they no longer find us. The rest can be tuned.
+
+| value | what it is | source |
+|---|---|---|
+| `@grupo {233, 252, 1, 32}` | multicast address of the announcement | contract |
+| `@puerto 45_892` | UDP port of the announcement | contract |
+| `@etiqueta "crdt-treedoc-1 "` | text every announcement starts with | contract |
+| `@anunciar_cada 2_000` | one announcement every 2 s | contract |
+| first announcement at start (`send(self(), :anunciar)` in `init`) | | contract ("every 2 s, starting at once") |
+| `@barrer_cada 10_000` | one sweep of the /24 every 10 s | our first version: `Defi` already swept every 10 s |
+| first sweep 1 s after start | `send_after(:barrer, 1_000)` | our choice, so the first one doesn't wait 10 s |
+| `@reintentar 30_000` | wait before trying again an announced node that didn't answer | taken from `andresmosqueraw/treedoc-op-nerves` (`@retry`); avoids trying an unreachable node every 2 s |
+| `@max_nombres 256` | most announced names turned into atoms | taken from the same repo (`@max_seen`); a flood of names can't use up the atom table (§8) |
+| `@nombre` (the regex) | a valid name: up to 64 letters, digits, `_`, `-` or `.`, then `@` and an IPv4 | taken from the same repo (`@name_re`); `fepecas` only checks the tag |
+| 64 addresses at a time, 3 s per epmd query, 5 s per address | pace of the sweep | our choice (that repo uses 64 and 15 s) |
+| sweep off on laptops (`CPD_DOC_BARRIDO`) | | our choice, so a laptop doesn't sweep a network that isn't ours |
+
+## 8. What can't bring a node down
+
+Everything that comes from outside is checked, and every process answers anything it doesn't expect instead of crashing:
+
+| input or event | what happens | test |
+|---|---|---|
+| any term as `cast`, `send` or `call` to `Crdt.Replica` | ignored, counted in `estado().ignoradas`; an unknown call answers `{:error, :desconocida}` | `replica_test.exs`, 1500 random terms from another node in `cluster_test.exs` |
+| an operation of the right shape but too big (a `ch` of megabytes, 10 000+ steps, 10 000+ clock entries) | rejected before it is walked | `mensaje_test.exs`, 20 000 random inputs |
+| operations out of order, repeated, or waiting for one that never comes | wait in a buffer of at most 50 000; duplicates dropped | `causal_test.exs`, 1000 random histories |
+| a log cut at any byte, or with any byte changed | truncated, or the valid prefix kept and the file moved aside | `historial_test.exs` |
+| a log that can't be opened | the replica doesn't start, calls answer `{:error, :sin_replica}` | `replica_test.exs` |
+| the replica killed | the supervisor starts it again from its log and it catches up | `cluster_test.exs` |
+| the network lost (`Node.stop`) and back | edits go on under the last name and are sent on reconnect | `cluster_test.exs` |
+| garbage UDP packets, a flood of announced names | ignored; at most 256 names become atoms | `descubrimiento_test.exs` |
+| a /31 or /32 network | no sweep, instead of invalid addresses | `descubrimiento_test.exs` |
+| `/data` not writable on the Pi | the epoch lives in memory: a new name each boot, never a reused number | |
+| a call that takes long | the IEx helpers wait 30 s and answer `{:error, :tiempo_agotado}` | |
+
+## 9. Why op-based
 
 The first version of this project was state-based (delta-state, Almeida, Shoker, Baquero 2018), in the history of this repository. Both are valid. [A] Table 2 compares them:
 
@@ -93,10 +131,10 @@ The first version of this project was state-based (delta-state, Almeida, Shoker,
 
 We moved to op-based so all the groups of the class edit one document with the same contract.
 
-## 9. Limitations
+## 10. Limitations
 
 - **Tombstones and history grow for ever.** Removing them needs causal stability or a distributed commit ([T] §4.2, [A] §4.2), and needs every participant known. Fine for a demo.
 - **The whole history is sent again on every `:nodeup`,** to every neighbour. With a few thousand operations it is fine.
-- **Typing at the end makes the path one step longer per char.** The §4.1 balancing of [T] reuses disambiguators, and the contract asks the last step to carry the operation's own one.
+- **Typing char by char at the end still makes the path one step longer per char.** Pastes are balanced (§5), but the §4.1 balancing of [T] for separate keystrokes reuses disambiguators, and the contract asks the last step to carry the operation's own one. Hundreds of typed chars are fine; thousands typed in one place slow the document down.
 - **The clock gets one entry per node name.** A Pi that changes IP has a new name, so a new entry.
 - **Deleting a laptop's log and editing under the same name** reuses sequence numbers. Use another name.

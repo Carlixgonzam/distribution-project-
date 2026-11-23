@@ -224,4 +224,43 @@ defmodule CpdDoc.TreedocTest do
     assert r.espera == []
     r.doc
   end
+
+  test "pegar 5000 caracteres es rápido y queda en orden, también entre borrados" do
+    texto = String.duplicate("abcdefghij", 500)
+    {microsegundos, {d, _}} = :timer.tc(fn -> escribir(Treedoc.nuevo(), 0, texto, 0, :a) end)
+
+    assert Treedoc.texto(d) == texto
+    assert microsegundos < 2_000_000
+
+    {:ok, posids} = Treedoc.preparar_borrado(d, 100, 50)
+    d = Enum.reduce(posids, d, fn p, d -> Treedoc.aplicar(d, %{op: :del, pos: p}) end)
+    {d, _} = escribir(d, 100, "PEGADO", 5000, :b)
+    esperado = String.slice(texto, 0, 100) <> "PEGADO" <> String.slice(texto, 150, 5000)
+
+    assert Treedoc.texto(d) == esperado
+  end
+
+  test "caracteres de varios puntos de código ocupan una sola posición" do
+    {d, _} = escribir(Treedoc.nuevo(), 0, "a👍🏽é\r\nñ🇨🇴", 0, :a)
+
+    assert Treedoc.texto(d) == "a👍🏽é\r\nñ🇨🇴"
+    assert length(Treedoc.visibles(d)) == 6
+    {:ok, [p]} = Treedoc.preparar_borrado(d, 1, 1)
+    assert Treedoc.texto(Treedoc.aplicar(d, %{op: :del, pos: p})) == "aé\r\nñ🇨🇴"
+  end
+
+  test "4 réplicas, cada operación llega entre 1 y 3 veces en cualquier orden (500 ejecuciones)" do
+    for _ <- 1..500 do
+      {replicas, ops} = simular()
+      d = Enum.random(replicas)
+
+      textos =
+        for _ <- 1..4 do
+          repetidas = Enum.flat_map(ops, fn op -> List.duplicate(op, :rand.uniform(3)) end)
+          Treedoc.texto(entregar_todo(d, Enum.shuffle(repetidas)))
+        end
+
+      assert length(Enum.uniq(textos)) == 1
+    end
+  end
 end

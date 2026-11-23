@@ -48,8 +48,14 @@ defmodule CpdDoc.Treedoc do
   end
 
   def preparar_insercion(doc, i, caracteres, seq0, nodo) do
-    if is_integer(i) and i >= 0 and i <= length(visibles(doc)) do
-      {:ok, colocar(doc, i, caracteres, seq0 + 1, nodo)}
+    orden = orden(doc)
+    visibles = sin_borrados(orden, doc.borrados)
+
+    if is_integer(i) and i >= 0 and i <= length(visibles) do
+      p = anterior(visibles, i)
+      lugar = {:entre, p, siguiente(orden, p)}
+      colocados = balancear(Enum.with_index(caracteres, seq0 + 1), lugar, nodo)
+      {:ok, en_orden(colocados)}
     else
       {:error, :posicion_invalida}
     end
@@ -73,16 +79,30 @@ defmodule CpdDoc.Treedoc do
     %{doc | borrados: MapSet.put(doc.borrados, posid)}
   end
 
-  defp colocar(_doc, _i, [], _seq, _nodo) do
+  defp balancear([], _lugar, _nodo) do
     []
   end
 
-  defp colocar(doc, i, [caracter | resto], seq, nodo) do
-    orden = orden(doc)
-    p = anterior(sin_borrados(orden, doc.borrados), i)
-    posid = nuevo_posid(p, siguiente(orden, p), seq, nodo)
-    doc = aplicar(doc, %{op: :ins, pos: posid, ch: caracter})
-    [{posid, caracter} | colocar(doc, i + 1, resto, seq + 1, nodo)]
+  defp balancear(caracteres, lugar, nodo) do
+    {izquierda, [{caracter, seq} | derecha]} = Enum.split(caracteres, div(length(caracteres), 2))
+    posid = ubicar(lugar, seq, nodo)
+    medio = [{posid, caracter, seq}]
+
+    medio ++
+      balancear(izquierda, {:hijo, posid, 0}, nodo) ++ balancear(derecha, {:hijo, posid, 1}, nodo)
+  end
+
+  defp ubicar({:entre, p, f}, seq, nodo) do
+    nuevo_posid(p, f, seq, nodo)
+  end
+
+  defp ubicar({:hijo, padre, bit}, seq, nodo) do
+    padre ++ [{bit, seq, nodo}]
+  end
+
+  defp en_orden(colocados) do
+    ordenados = Enum.sort_by(colocados, fn {_posid, _caracter, seq} -> seq end)
+    Enum.map(ordenados, fn {posid, caracter, _seq} -> {posid, caracter} end)
   end
 
   defp sin_borrados(orden, borrados) do

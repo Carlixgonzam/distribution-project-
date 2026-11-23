@@ -21,7 +21,7 @@ defmodule CpdDoc.Historial do
   end
 
   def agregar(fd, ops) do
-    lineas = Enum.map(ops, fn op -> [Base.encode64(:erlang.term_to_binary(op)), ?\n] end)
+    lineas = Enum.map(ops, fn op -> [codificar(op), ?\n] end)
 
     with :ok <- :file.write(fd, lineas) do
       :file.sync(fd)
@@ -47,9 +47,23 @@ defmodule CpdDoc.Historial do
     end
   end
 
+  defp codificar(op) do
+    binario = :erlang.term_to_binary(op)
+    Base.encode64(<<:erlang.crc32(binario)::32, binario::binary>>)
+  end
+
   defp decodificar(linea) do
-    with {:ok, binario} <- Base.decode64(linea) do
+    case Base.decode64(linea) do
+      {:ok, <<suma::32, binario::binary>>} -> verificar(suma, binario)
+      _ -> :error
+    end
+  end
+
+  defp verificar(suma, binario) do
+    if :erlang.crc32(binario) == suma do
       Mensaje.leer(:erlang.binary_to_term(binario))
+    else
+      :error
     end
   rescue
     ArgumentError -> :error

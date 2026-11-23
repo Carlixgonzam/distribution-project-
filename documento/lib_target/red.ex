@@ -5,10 +5,6 @@ defmodule CpdDoc.Red do
     GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
   end
 
-  def nombre(ip) do
-    String.to_atom("#{host()}-#{epoca()}@#{ip}")
-  end
-
   def init(:ok) do
     VintageNet.subscribe(["interface", "wlan0", "addresses"])
     send(self(), :revisar)
@@ -16,34 +12,42 @@ defmodule CpdDoc.Red do
   end
 
   def handle_info(:revisar, estado) do
-    {:noreply, actualizar(ipv4(VintageNet.get(["interface", "wlan0", "addresses"], [])), estado)}
+    direcciones = VintageNet.get(["interface", "wlan0", "addresses"], [])
+    {:noreply, actualizar(ipv4(direcciones), estado)}
   end
 
   def handle_info({VintageNet, _propiedad, _viejo, nuevo, _meta}, estado) do
     {:noreply, actualizar(ipv4(nuevo), estado)}
   end
 
+  def handle_info(_otro, estado) do
+    {:noreply, estado}
+  end
+
   defp actualizar(ip, estado) do
     if ip == estado.ip and Node.alive?() do
       estado
     else
-      if Node.alive?() do
-        IO.puts("deteniendo nodo #{inspect(Node.self())}")
-        Node.stop()
-      end
-
-      arrancar(ip)
+      detener_nodo()
+      arrancar_nodo(ip)
     end
   end
 
-  defp arrancar(nil) do
+  defp detener_nodo() do
+    if Node.alive?() do
+      IO.puts("deteniendo nodo #{inspect(Node.self())}")
+      Node.stop()
+    end
+  end
+
+  defp arrancar_nodo(nil) do
     IO.puts("wlan0 sin IPv4, esperando")
     %{ip: nil}
   end
 
-  defp arrancar(ip) do
+  defp arrancar_nodo(ip) do
     System.cmd("epmd", ["-daemon"])
-    nombre = nombre(ip)
+    nombre = String.to_atom("#{host()}-#{epoca()}@#{ip}")
 
     case Node.start(nombre, name_domain: :longnames) do
       {:ok, _} ->
@@ -67,15 +71,29 @@ defmodule CpdDoc.Red do
     archivo = Application.fetch_env!(:cpd_doc, :epoca)
 
     case File.read(archivo) do
-      {:ok, e} when byte_size(e) == 6 ->
-        e
-
-      _ ->
-        e = Base.encode16(:crypto.strong_rand_bytes(3), case: :lower)
-        File.mkdir_p!(Path.dirname(archivo))
-        File.write!(archivo, e, [:sync])
-        e
+      {:ok, e} -> revisar_epoca(e, archivo)
+      {:error, _} -> nueva_epoca(archivo)
     end
+  end
+
+  defp revisar_epoca(e, archivo) do
+    if Regex.match?(~r/\A[0-9a-f]{6}\z/, e) do
+      e
+    else
+      nueva_epoca(archivo)
+    end
+  end
+
+  defp nueva_epoca(archivo) do
+    e = Base.encode16(:crypto.strong_rand_bytes(3), case: :lower)
+    File.mkdir_p(Path.dirname(archivo))
+
+    case File.write(archivo, e, [:sync]) do
+      :ok -> :ok
+      {:error, razon} -> IO.puts("no se pudo guardar la época en #{archivo}: #{inspect(razon)}")
+    end
+
+    e
   end
 
   defp ipv4(nil) do

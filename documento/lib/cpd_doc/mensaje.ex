@@ -2,6 +2,7 @@ defmodule CpdDoc.Mensaje do
   @nombre Crdt.Replica
   @max_pasos 10_000
   @max_vc 10_000
+  @max_bytes_caracter 64
 
   def nombre() do
     @nombre
@@ -27,7 +28,7 @@ defmodule CpdDoc.Mensaje do
     :error
   end
 
-  def caracter?(ch) when is_binary(ch) do
+  def caracter?(ch) when is_binary(ch) and byte_size(ch) <= @max_bytes_caracter do
     String.valid?(ch) and length(String.graphemes(ch)) == 1
   end
 

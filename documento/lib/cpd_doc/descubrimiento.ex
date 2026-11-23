@@ -7,6 +7,7 @@ defmodule CpdDoc.Descubrimiento do
   @anunciar_cada 2_000
   @barrer_cada 10_000
   @reintentar 30_000
+  @max_nombres 256
   @nombre ~r/\A[A-Za-z0-9_\-.]{1,64}@\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\z/
 
   def start_link(_) do
@@ -17,15 +18,22 @@ defmodule CpdDoc.Descubrimiento do
     @etiqueta <> Atom.to_string(nodo)
   end
 
-  def leer_paquete(<<@etiqueta, nombre::binary>>) do
+  def leer_paquete(datos) do
+    case leer_nombre(datos) do
+      {:ok, nombre} -> {:ok, String.to_atom(nombre)}
+      :error -> :error
+    end
+  end
+
+  def leer_nombre(<<@etiqueta, nombre::binary>>) do
     if Regex.match?(@nombre, nombre) do
-      {:ok, String.to_atom(nombre)}
+      {:ok, nombre}
     else
       :error
     end
   end
 
-  def leer_paquete(_) do
+  def leer_nombre(_) do
     :error
   end
 
@@ -34,8 +42,12 @@ defmodule CpdDoc.Descubrimiento do
     tamano = Integer.pow(2, 32 - max(prefijo, 24))
     base = d - rem(d, tamano)
 
-    for x <- (base + 1)..(base + tamano - 2), x != d do
-      Enum.join([a, b, c, x], ".")
+    if tamano < 4 do
+      []
+    else
+      for x <- (base + 1)..(base + tamano - 2), x != d do
+        Enum.join([a, b, c, x], ".")
+      end
     end
   end
 
@@ -43,7 +55,7 @@ defmodule CpdDoc.Descubrimiento do
     :net_kernel.monitor_nodes(true)
     send(self(), :anunciar)
     Process.send_after(self(), :barrer, 1_000)
-    {:ok, %{socket: nil, ip: nil, fallidos: %{}, barriendo: nil}}
+    {:ok, %{socket: nil, ip: nil, fallidos: %{}, barriendo: nil, nombres: MapSet.new()}}
   end
 
   def handle_info(:anunciar, estado) do
@@ -58,8 +70,8 @@ defmodule CpdDoc.Descubrimiento do
   end
 
   def handle_info({:udp, _socket, _ip, _puerto, datos}, estado) do
-    case leer_paquete(datos) do
-      {:ok, nodo} -> {:noreply, intentar(nodo, estado)}
+    case leer_nombre(datos) do
+      {:ok, nombre} -> {:noreply, anunciado(nombre, estado)}
       :error -> {:noreply, estado}
     end
   end
@@ -96,6 +108,19 @@ defmodule CpdDoc.Descubrimiento do
 
   def handle_info(_otro, estado) do
     {:noreply, estado}
+  end
+
+  defp anunciado(nombre, estado) do
+    cond do
+      MapSet.member?(estado.nombres, nombre) ->
+        intentar(String.to_atom(nombre), estado)
+
+      MapSet.size(estado.nombres) < @max_nombres ->
+        intentar(String.to_atom(nombre), %{estado | nombres: MapSet.put(estado.nombres, nombre)})
+
+      true ->
+        estado
+    end
   end
 
   defp intentar(nodo, estado) do
@@ -164,6 +189,10 @@ defmodule CpdDoc.Descubrimiento do
       )
 
     Stream.run(intentos)
+  rescue
+    _ -> :error
+  catch
+    _, _ -> :error
   end
 
   defp conectar_en(vecino) do
