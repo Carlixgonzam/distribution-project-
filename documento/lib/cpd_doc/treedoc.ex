@@ -59,18 +59,6 @@ defmodule CpdDoc.Treedoc do
     end
   end
 
-  # Balanceo de la sección 4.1 de Treedoc. Cuando se sigue escribiendo justo
-  # después de la última letra insertada en esta réplica (doc.ultimo), en vez de
-  # colgar la letra como hijo derecho de la anterior, el árbol crece niveles(h)
-  # niveles de una vez (h = largo de p) y la letra toma la posición más pequeña de
-  # ese subárbol. Las letras siguientes de la racha ocupan las posiciones vacías
-  # del subárbol en orden infijo. Todos los pasos del subárbol llevan el
-  # desambiguador de la letra que lo creó y solo el sitio dueño lo llena, así que
-  # dos réplicas nunca crean el mismo PosID. Una inserción suelta usa nuevo_posid,
-  # porque crecer varios niveles por una sola letra alargaría los caminos.
-  # Limitaciones: no se implementa flatten, porque necesita un commit distribuido
-  # entre todos los nodos, y escribir hacia atrás (siempre en la misma posición)
-  # sigue creciendo un paso por letra.
   def posid_para(doc, p, f, dis) do
     {_, sitio} = dis
 

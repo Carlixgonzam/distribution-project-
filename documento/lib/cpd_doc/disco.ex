@@ -1,10 +1,4 @@
 defmodule CpdDoc.Disco do
-  # Guarda el contenido del documento (atomos y borrados) para que sobreviva si se
-  # apagan todos los nodos a la vez. El archivo es el mismo mensaje del protocolo,
-  # así que al cargarlo pasa por la misma validación que un mensaje recibido.
-  # No se guardan contador ni encarnación: la réplica arranca con una encarnación
-  # nueva, así que un archivo desactualizado nunca hace repetir un PosID.
-
   alias CpdDoc.Protocolo
   alias CpdDoc.Treedoc
 

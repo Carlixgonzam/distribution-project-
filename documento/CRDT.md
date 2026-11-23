@@ -56,6 +56,16 @@ What happens with each failure:
 
 This is [S] Theorem 2.1: with eventual delivery and a monotonic semilattice, the object is SEC ([S] Def. 2.3).
 
+**Why every 30 s** (`@difundir_cada` in `CpdDoc.Replica`). [A] only says "periodically" and [S] "infinitely often". Deltas and `:nodeup` leave three gaps that only the periodic resend closes:
+
+- Erlang takes 45 to 75 s (`net_ticktime`, 60 s by default) to notice a dead link. A delta sent in that window is lost, and if the link never goes down for Erlang there is no `:nodeup` either.
+- If `CpdDoc.Replica` crashes and the supervisor restarts it, the nodes stay connected, so no `:nodeup` arrives. It loads what it saved (§8) and gets the last few seconds from the others' next resend.
+- Two nodes that never talk directly only learn about each other through a third node's full state.
+
+Shorter repairs sooner, but each resend is the whole document to every neighbour, over a phone hotspot shared by up to 13 devices: a few hundred KB for a demo-sized text, 2 to 4 MB for 2000 chars. 30 s is about how long Erlang takes to notice a failure anyway. PROTOCOL.md leaves the value open.
+
+**`prevent_overlapping_partitions false`** (in `rel/vm.args.eex`). With the OTP default, when one link drops, `global` also cuts the node's other links, so it is left alone until the next subnet sweep (10 s on the Pi, never on a laptop). We saw it with 3 nodes: when `c` dropped, `a` lost `b` too. We use no global names, and the document converges again on reconnect anyway, so that isolation buys nothing.
+
 ## 4. No causal delivery needed
 
 Op-based Treedoc replays operations "as long as happened-before order is satisfied", and "an insert must happen-before a delete with the same identifier" ([T] §2.2). Here nothing has to arrive first:
@@ -78,6 +88,7 @@ How they stay unique, with the UDIS disambiguators of [T] §3.3.1:
 - Every step carries `{counter, {node(), incarnation}}`. The counter goes +1 on every local insert, and `node()` is `doc@<ip>`. The incarnation is random at startup, because the counter isn't saved and starts at 0 again after a restart.
 - A posid from the table in PROTOCOL.md ends in a step with a new disambiguator, so it can't exist yet.
 - A posid from the §4.1 balancing reuses the disambiguator of whoever created that subtree. Only that same `{node(), incarnation}` fills the subtree, and it checks its own atoms first, so it never takes a slot twice.
+- The incarnation is `:rand.uniform(1_000_000_000)` (`@max_encarnacion`). It is random rather than the time because the Pi has no hardware clock: Nerves sets it to the build time at boot (`update_clock: true`) until NTP answers, which may never happen on the hotspot, so two boots could read the same time. 10⁹ < 2³¹, so it fits the 4-byte integer of Erlang's external format, and it travels in every step of every posid.
 - The assumption: two sites never share `{node(), incarnation}`. For that to break, two Pis would need the same IP on different networks, then merge later, and also draw the same random number (1 in 10⁹).
 
 Test: the δ-mutator test above also checks that no posid repeats across 3 replicas, with runs of typing that use the balancing.
@@ -99,6 +110,8 @@ The balancing (`posid_para/4`) only takes a slot after checking `menor?(p, slot)
 ## 7. Balancing (§4.1) without touching the wire format
 
 Receivers only sort with `menor?`, so how a node builds its paths is invisible on the wire.
+
+**How it works** (`Treedoc.posid_para/4`). When a replica keeps typing right after the last char it inserted itself (`doc.ultimo`), the new char doesn't hang as the right child of the previous one. The tree grows `niveles(h) = ceil(log2(h)) + 1` levels at once (`h` is the length of `p`), and the char takes the smallest slot of that new subtree. The next chars of the run fill its empty slots in infix order. Every step of the subtree carries the disambiguator of the char that created it, and only that site fills it (§5). A lone insert uses the table of §6, because growing several levels for one char would only make paths longer.
 
 **Before.** Typing at the end made the path one step longer per char. `n` chars meant paths of length `n` and a full state of size O(n²).
 

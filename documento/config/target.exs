@@ -114,8 +114,6 @@ config :mdns_lite,
     }
   ]
 
-# /data is the writable application partition on Nerves. The document is saved
-# there so it survives if every node is switched off at the same time.
 config :cpd_doc, archivo: "/data/cpd_doc/documento.bin"
 
 # Import target specific config. This must remain at the bottom

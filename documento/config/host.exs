@@ -20,5 +20,4 @@ config :nerves_runtime,
        "a.nerves_fw_version" => "0.0.0"
      }}
 
-# On a laptop the document is only saved if CPD_DOC_ARCHIVO points to a file.
 config :cpd_doc, archivo: System.get_env("CPD_DOC_ARCHIVO")

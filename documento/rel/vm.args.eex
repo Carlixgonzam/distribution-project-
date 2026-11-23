@@ -46,9 +46,6 @@
 ## Enable heartbeat monitoring of the Erlang runtime system
 -heart -env HEART_BEAT_TIMEOUT 30
 
-## Don't let 'global' cut our other connections when one link drops. We use no
-## global names, and the CRDT converges again on reconnect, so isolating the node
-## for up to 10 s (until the next subnet sweep) buys nothing.
 -kernel prevent_overlapping_partitions false
 
 ## Start the Elixir shell

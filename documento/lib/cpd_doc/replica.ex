@@ -5,7 +5,11 @@ defmodule CpdDoc.Replica do
   alias CpdDoc.Protocolo
   alias CpdDoc.Treedoc
 
+  @difundir_cada 30_000
+
   @guardar_cada 5_000
+
+  @max_encarnacion 1_000_000_000
 
   def start_link(_) do
     GenServer.start_link(__MODULE__, :ok, name: :cpd_doc)
@@ -25,14 +29,14 @@ defmodule CpdDoc.Replica do
 
   def init(:ok) do
     :net_kernel.monitor_nodes(true)
-    Process.send_after(self(), :difundir, 30_000)
+    Process.send_after(self(), :difundir, @difundir_cada)
     Process.send_after(self(), :guardar, @guardar_cada)
     archivo = Application.get_env(:cpd_doc, :archivo)
 
     {:ok,
      %{
        doc: Treedoc.merge(Treedoc.nuevo(), Disco.cargar(archivo)),
-       encarnacion: :rand.uniform(1_000_000_000),
+       encarnacion: :rand.uniform(@max_encarnacion),
        archivo: archivo,
        sucio: false
      }}
@@ -69,7 +73,7 @@ defmodule CpdDoc.Replica do
 
   def handle_info(:difundir, estado) do
     Protocolo.difundir(estado.doc)
-    Process.send_after(self(), :difundir, 30_000)
+    Process.send_after(self(), :difundir, @difundir_cada)
     {:noreply, estado}
   end
 
