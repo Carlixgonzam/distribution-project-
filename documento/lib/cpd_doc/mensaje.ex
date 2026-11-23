@@ -1,8 +1,6 @@
 defmodule CpdDoc.Mensaje do
   @nombre Crdt.Replica
-  @max_pasos 10_000
   @max_vc 10_000
-  @max_bytes_caracter 64
 
   def nombre() do
     @nombre
@@ -28,8 +26,8 @@ defmodule CpdDoc.Mensaje do
     :error
   end
 
-  def caracter?(ch) when is_binary(ch) and byte_size(ch) <= @max_bytes_caracter do
-    String.valid?(ch) and length(String.graphemes(ch)) == 1
+  def caracter?(ch) when is_binary(ch) do
+    String.first(ch) == ch and String.valid?(ch)
   end
 
   def caracter?(_) do
@@ -37,7 +35,7 @@ defmodule CpdDoc.Mensaje do
   end
 
   defp base?(from, vc, pos) do
-    nodo?(from) and vc?(vc) and propio?(Map.get(vc, from)) and pasos?(pos, 0)
+    nodo?(from) and vc?(vc) and propio?(Map.get(vc, from)) and pos != [] and pasos?(pos)
   end
 
   defp nodo?(from) do
@@ -60,16 +58,16 @@ defmodule CpdDoc.Mensaje do
     false
   end
 
-  defp pasos?([], n) do
-    n > 0
+  defp pasos?([]) do
+    true
   end
 
-  defp pasos?([{bit, seq, nodo} | resto], n)
-       when bit in [0, 1] and is_integer(seq) and seq >= 1 and is_atom(nodo) and n < @max_pasos do
-    pasos?(resto, n + 1)
+  defp pasos?([{bit, seq, nodo} | resto])
+       when bit in [0, 1] and is_integer(seq) and seq >= 1 and is_atom(nodo) do
+    pasos?(resto)
   end
 
-  defp pasos?(_, _) do
+  defp pasos?(_) do
     false
   end
 end

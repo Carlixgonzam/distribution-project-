@@ -131,6 +131,20 @@ defmodule CpdDoc.ClusterTest do
     assert llamar(c.pa, CpdDoc, :estado).reloj[c.b] == 3
   end
 
+  test "un grafema de muchos bytes llega a todos y sobrevive al reinicio", c do
+    malla(c)
+    acentos = "e" <> String.duplicate("\u0301", 40)
+    :ok = llamar(c.pb, CpdDoc, :insertar, [0, acentos <> "hola"])
+    assert eventualmente(fn -> iguales?(c.todos, acentos <> "hola") end)
+
+    :ok = llamar(c.pb, Supervisor, :terminate_child, [CpdDoc.Supervisor, CpdDoc.Replica])
+    {:ok, _} = llamar(c.pb, Supervisor, :restart_child, [CpdDoc.Supervisor, CpdDoc.Replica])
+
+    refute llamar(c.pb, CpdDoc, :estado).bloqueado
+    :ok = llamar(c.pb, CpdDoc, :insertar, [5, "!"])
+    assert eventualmente(fn -> iguales?(c.todos, acentos <> "hola!") end)
+  end
+
   test "un nodo nuevo recibe todo el historial al conectarse", c do
     unir(c.pa, c.b)
     :ok = llamar(c.pa, CpdDoc, :insertar, [0, "hola"])

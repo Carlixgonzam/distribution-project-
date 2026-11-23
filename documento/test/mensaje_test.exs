@@ -70,6 +70,17 @@ defmodule CpdDoc.MensajeTest do
     end
   end
 
+  test "un grafema de muchos bytes y un camino largo se aceptan, como en el contrato" do
+    acentos = "e" <> String.duplicate("\u0301", 40)
+    camino = for seq <- 1..20_000, do: {1, seq, :"crdt1@127.0.0.1"}
+
+    assert byte_size(acentos) == 81
+    assert {:ok, _} = Mensaje.leer(%{@ins | ch: acentos})
+    assert {:ok, _} = Mensaje.leer(%{@ins | ch: "👨‍👩‍👧‍👦"})
+    assert {:ok, _} = Mensaje.leer(%{@ins | pos: camino})
+    assert {:ok, _} = Mensaje.leer(%{@del | pos: camino})
+  end
+
   test "un carácter gigante se rechaza sin recorrerlo" do
     enorme = String.duplicate("a", 50_000_000)
     {microsegundos, resultado} = :timer.tc(fn -> Mensaje.leer(%{@ins | ch: enorme}) end)
