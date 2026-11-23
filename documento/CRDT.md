@@ -51,6 +51,7 @@ If a node numbered two operations the same, the others would drop the second as 
 
 - Every local edit is written to the log with one `fsync` before anything is applied or sent (`CpdDoc.Historial`). On restart the log rebuilds the document and the clock, and numbering goes on where it was.
 - A cut last line (power failure) is truncated: that operation never left the node.
+- A local edit goes through `Mensaje.leer`, the same check the loader uses, before it is written. So the log never holds an operation that can't be loaded back, which would block the node on the next restart.
 - Every line carries a CRC32 of the operation. A changed byte that still decodes into a valid operation (another char, another sequence number) fails the check and counts as damaged, instead of being loaded silently.
 - A damaged line in the middle keeps the valid prefix, moves the file aside and, on the Pi, deletes the epoch, so the node comes back with a new name. Skipping the line would leave a hole in the clock.
 - On the Pi the name is `<hostname>-<epoch>@<ip>`. Burning the SD card again deletes `/data`, log and epoch together, so the Pi comes back with a new name and starts numbering from 1 under it.
@@ -107,7 +108,8 @@ Everything that comes from outside is checked, and every process answers anythin
 | input or event | what happens | test |
 |---|---|---|
 | any term as `cast`, `send` or `call` to `Crdt.Replica` | ignored, counted in `estado().ignoradas`; an unknown call answers `{:error, :desconocida}` | `replica_test.exs`, 1500 random terms from another node in `cluster_test.exs` |
-| an operation of the right shape but too big (a `ch` of megabytes, 10 000+ steps, 10 000+ clock entries) | rejected before it is walked | `mensaje_test.exs`, 20 000 random inputs |
+| a `ch` of megabytes with many graphemes, or a clock with 10 000+ entries | rejected without walking it | `mensaje_test.exs`, 20 000 random inputs |
+| a single grapheme of many bytes (accents stacked on one letter), a path of 20 000 steps | accepted, as the contract allows: rejecting what another group accepts would leave every later operation of that node waiting for ever | `mensaje_test.exs`, `cluster_test.exs` |
 | operations out of order, repeated, or waiting for one that never comes | wait in a buffer of at most 50 000; duplicates dropped | `causal_test.exs`, 1000 random histories |
 | a log cut at any byte, or with any byte changed | truncated, or the valid prefix kept and the file moved aside | `historial_test.exs` |
 | a log that can't be opened | the replica doesn't start, calls answer `{:error, :sin_replica}` | `replica_test.exs` |

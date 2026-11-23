@@ -265,6 +265,14 @@ defmodule CpdDoc.Replica do
   end
 
   defp locales(ops, estado) do
+    if Enum.all?(ops, fn op -> Mensaje.leer(op) != :error end) do
+      guardar(ops, estado)
+    else
+      {:reply, {:error, :operacion_invalida}, estado}
+    end
+  end
+
+  defp guardar(ops, estado) do
     case Historial.agregar(estado.fd, ops) do
       :ok ->
         estado = aplicar(ops, estado)
