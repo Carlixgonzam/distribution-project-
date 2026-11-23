@@ -4,12 +4,14 @@ What every group has to match so all nodes edit one document. Anything not liste
 
 ## Network
 
-- Everyone joins the same iPhone hotspot (WPA2). Name and password are shared privately, not in any repo.
-- Whoever lends the hotspot: turn on "Maximize Compatibility" and keep the Personal Hotspot screen open while devices join.
-- The hotspot hands out `172.20.10.2` to `172.20.10.14`, so 13 devices at most, and iOS may allow fewer. Every Pi and every laptop counts. Let's agree beforehand who joins.
-- Node name: `doc@<ipv4>`, e.g. `doc@172.20.10.3`. Long names only (`--name`, never `--sname`).
+- Everyone joins the Wi‑Fi of the same router. Name and password are shared privately, not in any repo.
+- The router has to:
+  - use WPA2‑Personal, or WPA2/WPA3 mixed. Our Pis connect with WPA‑PSK, so a WPA3‑only network won't work.
+  - have client isolation (AP or guest isolation) off. With it on, devices get an IP but can't reach each other.
+  - hand out addresses in a /24, e.g. `192.168.1.x` with mask `255.255.255.0`. Our Pis only sweep the subnet on their own when it is /24 or smaller. On a bigger network someone has to run `Node.connect` by hand.
+- Node name: `doc@<ipv4>`, e.g. `doc@192.168.1.23`. Long names only (`--name`, never `--sname`).
 - Cookie: `cpd2026`.
-- Connecting to any one node is enough, Erlang connects you to the rest. Our Pis also try `Node.connect` on every hotspot address every 10 s.
+- Connecting to any one node is enough, Erlang connects you to the rest. Our Pis also try `Node.connect` on every address of their subnet every 10 s.
 - From a laptop: `iex --name doc@<your ip> --cookie cpd2026 --erl "-kernel prevent_overlapping_partitions false" -S mix`, then `Node.connect(:"doc@<ip of any node>")`.
 - Recommended: start every node with `-kernel prevent_overlapping_partitions false`. With the OTP default (`true`), when one link drops `global` also cuts the node's other connections and it stays alone until something reconnects it. Nothing here uses global names, so there is nothing to protect.
 
@@ -152,5 +154,5 @@ Our implementation passes all seven in `documento/test/protocolo_test.exs`. Why 
 
 ## Still open
 
-- 30 s for the full-state resend, or longer if the hotspot gets slow?
+- 30 s for the full-state resend, or longer if the network gets slow?
 - Discovery by mDNS and the API exchange belong to the other assignment, see [adhoc/PROTOCOL.md](adhoc/PROTOCOL.md).

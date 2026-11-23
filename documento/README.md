@@ -23,4 +23,4 @@ mix firmware
 mix burn
 ```
 
-The Pi joins the hotspot, starts as `doc@<ip>` and tries to connect to every address on the hotspot subnet every 10 s. The document is saved to `/data` every 5 s, so it survives reboots. SSH only accepts the public keys in `~/.ssh` of whoever built the firmware.
+`HOTSPOT_SSID` and `HOTSPOT_PSK` are the name and password of the router's Wi‑Fi. The Pi joins it, starts as `doc@<ip>` and tries to connect to every address of its subnet every 10 s, as long as the subnet is a /24 or smaller (see [PROTOCOL.md](../PROTOCOL.md)). The document is saved to `/data` every 5 s, so it survives reboots. SSH only accepts the public keys in `~/.ssh` of whoever built the firmware.
