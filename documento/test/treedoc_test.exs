@@ -1,331 +1,227 @@
 defmodule CpdDoc.TreedocTest do
   use ExUnit.Case, async: true
 
+  alias CpdDoc.Causal
   alias CpdDoc.Treedoc
 
-  defp escribir(doc, i, cadena, sitio) do
-    String.graphemes(cadena)
-    |> Enum.with_index(i)
-    |> Enum.reduce(doc, fn {caracter, j}, acc ->
-      {acc, _delta} = Treedoc.insertar(acc, j, caracter, sitio)
-      acc
-    end)
+  defp doc(atomos) do
+    doc(atomos, [])
   end
 
-  defp escribir_al_reves(doc, i, cadena, sitio) do
-    String.graphemes(cadena)
-    |> Enum.reverse()
-    |> Enum.reduce(doc, fn caracter, acc ->
-      {acc, _delta} = Treedoc.insertar(acc, i, caracter, sitio)
-      acc
-    end)
+  defp doc(atomos, borrados) do
+    d = insertar_todos(Treedoc.nuevo(), atomos)
+    Enum.reduce(borrados, d, fn p, d -> Treedoc.aplicar(d, %{op: :del, pos: p}) end)
   end
 
-  defp contenido(doc) do
-    {doc.atomos, doc.borrados}
+  defp insertar_todos(d, posids) do
+    Enum.reduce(posids, d, fn {p, c}, d -> Treedoc.aplicar(d, %{op: :ins, pos: p, ch: c}) end)
   end
 
-  defp aplicar(doc, deltas) do
-    Enum.reduce(deltas, doc, fn delta, acc -> Treedoc.merge(acc, delta) end)
+  defp escribir(d, i, texto, seq0, nodo) do
+    {:ok, posids} = Treedoc.preparar_insercion(d, i, String.graphemes(texto), seq0, nodo)
+    {insertar_todos(d, posids), posids}
   end
 
-  test "edición concurrente: MAR, una réplica borra la R y otra inserta A al inicio" do
-    r1 = escribir(Treedoc.nuevo(), 0, "MAR", {:a, 1})
-    r2 = Treedoc.merge(Treedoc.nuevo(), r1)
+  test "orden infijo, hermanos por {seq, nodo} y borrados" do
+    v1 = [
+      {[{1, 1, :a}], "c"},
+      {[{1, 1, :a}, {0, 2, :a}], "b"},
+      {[{1, 1, :a}, {1, 3, :a}], "d"},
+      {[{1, 1, :a}, {0, 2, :a}, {0, 4, :a}], "a"}
+    ]
 
-    {r1, d1} = Treedoc.borrar(r1, 2)
-    {r2, d2} = Treedoc.insertar(r2, 0, "A", {:b, 1})
+    assert Treedoc.texto(doc(v1)) == "abcd"
+    assert Treedoc.texto(doc(v1, [[{1, 1, :a}, {0, 2, :a}]])) == "acd"
 
-    r1 = Treedoc.merge(r1, d2)
-    r2 = Treedoc.merge(r2, d1)
+    v2 = [
+      {[{1, 2, :a}], "Z"},
+      {[{1, 1, :b}], "Y"},
+      {[{1, 1, :a}, {1, 5, :a}], "x"},
+      {[{1, 1, :a}], "X"}
+    ]
 
-    assert Treedoc.texto(r1) == "AMA"
-    assert Treedoc.texto(r2) == "AMA"
+    assert Treedoc.texto(doc(v2)) == "XxYZ"
   end
 
-  test "mismo hueco: X de {:a, 1} e Y de {:b, 1} dan XY en cualquier orden" do
-    {_, dx} = Treedoc.insertar(Treedoc.nuevo(), 0, "X", {:a, 1})
-    {_, dy} = Treedoc.insertar(Treedoc.nuevo(), 0, "Y", {:b, 1})
+  test "figuras 3 y 4 del paper: W e Y a la vez entre c y d, luego X entre W e Y" do
+    c = [{1, 1, :c}]
+    b = c ++ [{0, 1, :b}]
+    e = c ++ [{1, 1, :e}]
+    d = e ++ [{0, 1, :d}]
+    w = d ++ [{0, 1, :w}]
+    y = d ++ [{0, 1, :y}]
 
-    assert Treedoc.texto(aplicar(Treedoc.nuevo(), [dx, dy])) == "XY"
-    assert Treedoc.texto(aplicar(Treedoc.nuevo(), [dy, dx])) == "XY"
+    figura_3 = [
+      {c, "c"},
+      {b, "b"},
+      {b ++ [{0, 1, :a}], "a"},
+      {e, "e"},
+      {d, "d"},
+      {e ++ [{1, 1, :f}], "f"},
+      {w, "W"},
+      {y, "Y"},
+      {y ++ [{1, 1, :z}], "Z"}
+    ]
+
+    assert Treedoc.texto(doc(figura_3)) == "abcWYZdef"
+    assert Treedoc.texto(doc([{w ++ [{1, 1, :x}], "X"} | figura_3])) == "abcWXYZdef"
   end
 
-  test "un borrado que llega antes que su inserción oculta el carácter" do
-    {r1, d_insertar} = Treedoc.insertar(Treedoc.nuevo(), 0, "Z", {:a, 1})
-    {_, d_borrar} = Treedoc.borrar(r1, 0)
-
-    r2 = Treedoc.merge(Treedoc.nuevo(), d_borrar)
-    assert Treedoc.texto(r2) == ""
-
-    r2 = Treedoc.merge(r2, d_insertar)
-    assert Treedoc.texto(r2) == ""
-    assert map_size(r2.atomos) == 1
-  end
-
-  test "deltas duplicados no cambian nada" do
-    {r1, d1} = Treedoc.insertar(Treedoc.nuevo(), 0, "h", {:a, 1})
-    {r1, d2} = Treedoc.insertar(r1, 1, "o", {:a, 1})
-    {_, d3} = Treedoc.borrar(r1, 0)
-    deltas = [d1, d2, d3]
-
-    una_vez = aplicar(Treedoc.nuevo(), deltas)
-    dos_veces = aplicar(Treedoc.nuevo(), deltas ++ deltas)
-    intercalados = aplicar(Treedoc.nuevo(), [d1, d1, d2, d3, d2, d3])
-
-    assert dos_veces == una_vez
-    assert intercalados == una_vez
-    assert Treedoc.texto(una_vez) == "o"
-  end
-
-  test "reinicio: mismo node() con otra encarnación no choca y merge da el mismo texto" do
-    {a, da} = Treedoc.insertar(Treedoc.nuevo(), 0, "x", {:nodo, 1})
-    {b, db} = Treedoc.insertar(Treedoc.nuevo(), 0, "y", {:nodo, 2})
-
-    assert Map.keys(da.atomos) != Map.keys(db.atomos)
-    assert map_size(Treedoc.merge(a, b).atomos) == 2
-    assert Treedoc.texto(Treedoc.merge(a, b)) == Treedoc.texto(Treedoc.merge(b, a))
-  end
-
-  test "leyes del merge y convergencia en 200 ejecuciones aleatorias de 3 réplicas" do
-    for _ <- 1..200 do
-      {[a, b, c], deltas} = simular()
-
-      assert contenido(Treedoc.merge(a, b)) == contenido(Treedoc.merge(b, a))
-
-      assert contenido(Treedoc.merge(Treedoc.merge(a, b), c)) ==
-               contenido(Treedoc.merge(a, Treedoc.merge(b, c)))
-
-      assert contenido(Treedoc.merge(a, a)) == contenido(a)
-
-      finales =
-        for r <- [a, b, c] do
-          aplicar(r, Enum.shuffle(deltas ++ Enum.take_random(deltas, 10)))
-        end
-
-      [f1, f2, f3] = finales
-      assert contenido(f1) == contenido(f2)
-      assert contenido(f2) == contenido(f3)
-      assert Treedoc.texto(f1) == Treedoc.texto(f2)
-      assert Treedoc.texto(f2) == Treedoc.texto(f3)
-      assert contenido(f1) == contenido(aplicar(Treedoc.vacio(), deltas))
-    end
-  end
-
-  test "sin intercalado: Alice y Charlie a la vez antes del ! escribiendo hacia adelante" do
-    base = escribir(Treedoc.nuevo(), 0, "Hello!", {:base, 1})
-    alice = escribir(Treedoc.merge(Treedoc.nuevo(), base), 5, " Alice", {:alice, 1})
-    charlie = escribir(Treedoc.merge(Treedoc.nuevo(), base), 5, " Charlie", {:charlie, 1})
-
-    assert Treedoc.texto(Treedoc.merge(alice, charlie)) == "Hello Alice Charlie!"
-    assert Treedoc.texto(Treedoc.merge(charlie, alice)) == "Hello Alice Charlie!"
-  end
-
-  test "sin intercalado: Alice y Charlie a la vez antes del ! escribiendo hacia atrás" do
-    base = escribir(Treedoc.nuevo(), 0, "Hello!", {:base, 1})
-    alice = escribir_al_reves(Treedoc.merge(Treedoc.nuevo(), base), 5, " Alice", {:alice, 1})
-
-    charlie =
-      escribir_al_reves(Treedoc.merge(Treedoc.nuevo(), base), 5, " Charlie", {:charlie, 1})
-
-    assert Treedoc.texto(alice) == "Hello Alice!"
-    assert Treedoc.texto(Treedoc.merge(alice, charlie)) == "Hello Alice Charlie!"
-    assert Treedoc.texto(Treedoc.merge(charlie, alice)) == "Hello Alice Charlie!"
-  end
-
-  test "sin intercalado sin importar quién escribió la base" do
-    for autor <- [{:base, 1}, {:alice, 1}, {:charlie, 1}] do
-      base = escribir(Treedoc.nuevo(), 0, "Hello!", autor)
-      inicio_alice = if autor == {:alice, 1}, do: base, else: Treedoc.merge(Treedoc.nuevo(), base)
-
-      inicio_charlie =
-        if autor == {:charlie, 1}, do: base, else: Treedoc.merge(Treedoc.nuevo(), base)
-
-      alice = escribir(inicio_alice, 5, " Alice", {:alice, 1})
-      charlie = escribir(inicio_charlie, 5, " Charlie", {:charlie, 1})
-      t1 = Treedoc.texto(Treedoc.merge(alice, charlie))
-      t2 = Treedoc.texto(Treedoc.merge(charlie, alice))
-
-      assert t1 == t2
-      assert t1 in ["Hello Alice Charlie!", "Hello Charlie Alice!"]
-    end
-  end
-
-  test "inserción local: 2000 inserciones y borrados aleatorios coinciden con un String" do
-    letras = String.graphemes("abcdefghijklmnopqrstuvwxyz ")
-
-    {doc, cadena} =
-      Enum.reduce(1..2000, {Treedoc.nuevo(), ""}, fn _, {doc, cadena} ->
-        n = String.length(cadena)
-
-        if n > 0 and :rand.uniform(3) == 1 do
-          i = Enum.random(0..(n - 1))
-          {doc, _} = Treedoc.borrar(doc, i)
-          {doc, String.slice(cadena, 0, i) <> String.slice(cadena, i + 1, n)}
-        else
-          i = Enum.random(0..n)
-          c = Enum.random(letras)
-          {doc, _} = Treedoc.insertar(doc, i, c, {:a, 1})
-          {doc, String.slice(cadena, 0, i) <> c <> String.slice(cadena, i, n)}
-        end
+  test "insertar texto y borrar rangos coinciden con un String en 500 ediciones" do
+    {d, cadena, _} =
+      Enum.reduce(1..500, {Treedoc.nuevo(), "", 0}, fn _, {d, cadena, seq} ->
+        editar_al_azar(d, cadena, seq)
       end)
 
-    assert Treedoc.texto(doc) == cadena
+    assert Treedoc.texto(d) == cadena
   end
 
-  test "balanceo 4.1: escribir 2000 letras al final no crece un paso por letra" do
-    doc = escribir(Treedoc.nuevo(), 0, String.duplicate("ab", 1000), {:a, 1})
-    largos = Enum.map(Map.keys(doc.atomos), fn p -> length(p) end)
+  defp editar_al_azar(d, cadena, seq) do
+    n = String.length(cadena)
 
-    assert Treedoc.texto(doc) == String.duplicate("ab", 1000)
-    assert map_size(doc.atomos) == 2000
-    assert Enum.max(largos) < 150
+    if n > 0 and :rand.uniform(3) == 1 do
+      i = Enum.random(0..(n - 1))
+      k = Enum.random(1..min(3, n - i))
+      {:ok, posids} = Treedoc.preparar_borrado(d, i, k)
+      d = Enum.reduce(posids, d, fn p, d -> Treedoc.aplicar(d, %{op: :del, pos: p}) end)
+      {d, String.slice(cadena, 0, i) <> String.slice(cadena, i + k, n), seq}
+    else
+      i = Enum.random(0..n)
+      t = Enum.random(["a", "bc", "ñé", "xyz"])
+      {d, _} = escribir(d, i, t, seq, :a)
+      {d, String.slice(cadena, 0, i) <> t <> String.slice(cadena, i, n), seq + String.length(t)}
+    end
   end
 
-  test "balanceo 4.1: el subárbol se llena en orden infijo" do
-    d1 = {1, {:a, 1}}
-    d2 = {2, {:a, 1}}
-    d3 = {3, {:a, 1}}
-    doc = escribir(Treedoc.nuevo(), 0, "xyzwv", {:a, 1})
-    posids = Enum.map(Treedoc.visibles(doc), fn {p, _} -> p end)
+  test "el último paso de cada PosID nuevo lleva el {seq, nodo} de su operación" do
+    {d, _} = escribir(Treedoc.nuevo(), 0, "hola", 0, :a)
+    {_, posids} = escribir(d, 2, "XYZ", 4, :b)
+    ultimos = Enum.map(posids, fn {p, _} -> List.last(p) end)
 
-    assert posids == [
-             [{1, d1}],
-             [{1, d1}, {1, d2}],
-             [{1, d1}, {1, d2}, {1, d3}, {0, d3}],
-             [{1, d1}, {1, d2}, {1, d3}],
-             [{1, d1}, {1, d2}, {1, d3}, {1, d3}]
+    assert Enum.map(ultimos, fn {_bit, seq, nodo} -> {seq, nodo} end) == [
+             {5, :b},
+             {6, :b},
+             {7, :b}
            ]
   end
 
-  test "balanceo 4.1: solo el dueño llena los huecos de su subárbol" do
-    alice = escribir(Treedoc.nuevo(), 0, "abc", {:alice, 1})
-    {bob, delta} = Treedoc.insertar(Treedoc.merge(Treedoc.nuevo(), alice), 3, "d", {:bob, 1})
-    [posid] = Map.keys(delta.atomos)
+  test "posiciones inválidas no cambian nada" do
+    {d, _} = escribir(Treedoc.nuevo(), 0, "ab", 0, :a)
 
-    assert {_, {_, {:bob, 1}}} = List.last(posid)
-    assert Treedoc.texto(bob) == "abcd"
+    assert Treedoc.preparar_insercion(d, 3, ["x"], 2, :a) == {:error, :posicion_invalida}
+    assert Treedoc.preparar_insercion(d, -1, ["x"], 2, :a) == {:error, :posicion_invalida}
+    assert Treedoc.preparar_borrado(d, 1, 2) == {:error, :posicion_invalida}
+    assert Treedoc.preparar_borrado(d, 0, 0) == {:ok, []}
   end
 
-  test "balanceo 4.1: dos réplicas escribiendo al final a la vez no repiten ni se intercalan" do
-    for _ <- 1..50 do
-      base = escribir(Treedoc.nuevo(), 0, "hola", {:base, 1})
-      n1 = Enum.random(1..40)
-      n2 = Enum.random(1..40)
-      a = escribir(Treedoc.merge(Treedoc.nuevo(), base), 4, String.duplicate("a", n1), {:a, 1})
-      b = escribir(Treedoc.merge(Treedoc.nuevo(), base), 4, String.duplicate("b", n2), {:b, 1})
-      ab = Treedoc.merge(a, b)
+  test "sin intercalado: Alice y Charlie a la vez antes del !, hacia adelante" do
+    {base, _} = escribir(Treedoc.nuevo(), 0, "Hello!", 0, :base)
+    {alice, da} = escribir(base, 5, " Alice", 0, :alice)
+    {charlie, dc} = escribir(base, 5, " Charlie", 0, :charlie)
 
-      assert map_size(ab.atomos) == 4 + n1 + n2
-      assert Treedoc.texto(ab) == Treedoc.texto(Treedoc.merge(b, a))
-      assert Treedoc.texto(ab) == "hola" <> String.duplicate("a", n1) <> String.duplicate("b", n2)
-    end
+    assert Treedoc.texto(insertar_todos(alice, dc)) == "Hello Alice Charlie!"
+    assert Treedoc.texto(insertar_todos(charlie, da)) == "Hello Alice Charlie!"
   end
 
-  test "balanceo 4.1: los PosID nuevos siguen pasando la validación del protocolo" do
-    doc = escribir(Treedoc.nuevo(), 0, String.duplicate("x", 300), {:"doc@172.20.10.3", 42})
-    doc = escribir(doc, 150, String.duplicate("y", 100), {:"doc@172.20.10.3", 42})
+  test "sin intercalado: Alice y Charlie a la vez antes del !, hacia atrás" do
+    {base, _} = escribir(Treedoc.nuevo(), 0, "Hello!", 0, :base)
+    {alice, da} = escribir_al_reves(base, 5, " Alice", :alice)
+    {charlie, dc} = escribir_al_reves(base, 5, " Charlie", :charlie)
 
-    assert {:ok, leido} = CpdDoc.Protocolo.leer(CpdDoc.Protocolo.mensaje(doc))
-    assert leido.atomos == doc.atomos
+    assert Treedoc.texto(alice) == "Hello Alice!"
+    assert Treedoc.texto(insertar_todos(alice, dc)) == "Hello Alice Charlie!"
+    assert Treedoc.texto(insertar_todos(charlie, da)) == "Hello Alice Charlie!"
   end
 
-  test "un PosID con dos letras distintas converge igual en cualquier orden" do
-    paso = {1, {1, {:"doc@172.20.10.3", 7}}}
-    a = Treedoc.merge(Treedoc.nuevo(), %{atomos: %{[paso] => "x"}, borrados: MapSet.new()})
-    b = Treedoc.merge(Treedoc.nuevo(), %{atomos: %{[paso] => "y"}, borrados: MapSet.new()})
+  defp escribir_al_reves(base, i, texto, nodo) do
+    letras = Enum.with_index(Enum.reverse(String.graphemes(texto)))
 
-    assert Treedoc.texto(Treedoc.merge(a, b)) == "y"
-    assert Treedoc.texto(Treedoc.merge(b, a)) == "y"
+    Enum.reduce(letras, {base, []}, fn {c, k}, {d, posids} ->
+      {d, [posid]} = escribir(d, i, c, k, nodo)
+      {d, [posid | posids]}
+    end)
   end
 
-  test "δ-mutadores: cada operación local es X ⊔ delta, infla el estado y no repite PosID" do
+  test "3 réplicas con entrega causal en órdenes aleatorios convergen (200 ejecuciones)" do
     for _ <- 1..200 do
-      sitios = %{1 => {:a, 1}, 2 => {:b, 1}, 3 => {:c, 1}}
-      replicas = %{1 => Treedoc.nuevo(), 2 => Treedoc.nuevo(), 3 => Treedoc.nuevo()}
+      {replicas, ops} = simular()
 
-      {_replicas, deltas} =
-        Enum.reduce(1..15, {replicas, []}, fn _, {replicas, deltas} ->
-          k = Enum.random(1..3)
-          {doc, nuevos} = racha(recibir_alguno(replicas[k], deltas), sitios[k])
-          {Map.put(replicas, k, doc), nuevos ++ deltas}
-        end)
+      textos =
+        for r <- replicas do
+          Treedoc.texto(entregar_todo(r, Enum.shuffle(ops)))
+        end
 
-      posids = Enum.flat_map(deltas, fn delta -> Map.keys(delta.atomos) end)
+      assert length(Enum.uniq(textos)) == 1
+
+      posids =
+        for %{op: :ins, pos: p} <- ops do
+          p
+        end
+
       assert length(posids) == length(Enum.uniq(posids))
     end
   end
 
-  defp racha(doc, sitio) do
-    n = length(Treedoc.visibles(doc))
-
-    if n > 0 and :rand.uniform(4) == 1 do
-      {nuevo, delta} = Treedoc.borrar(doc, Enum.random(0..(n - 1)))
-      assert MapSet.size(delta.borrados) == 1 and delta.atomos == %{}
-      revisar_mutador(doc, nuevo, delta)
-      {nuevo, [delta]}
-    else
-      i = Enum.random(0..n)
-
-      Enum.reduce(0..(Enum.random(1..6) - 1), {doc, []}, fn j, {x, deltas} ->
-        {nuevo, delta} = Treedoc.insertar(x, i + j, "a", sitio)
-        [posid] = Map.keys(delta.atomos)
-        refute Map.has_key?(x.atomos, posid)
-        assert delta.borrados == MapSet.new()
-        revisar_mutador(x, nuevo, delta)
-        {nuevo, [delta | deltas]}
-      end)
-    end
-  end
-
-  defp revisar_mutador(x, nuevo, delta) do
-    assert contenido(Treedoc.merge(x, delta)) == contenido(nuevo)
-    assert contenido(Treedoc.merge(x, nuevo)) == contenido(nuevo)
-  end
-
-  test "posiciones y caracteres inválidos" do
-    {doc, _} = Treedoc.insertar(Treedoc.nuevo(), 0, "a", {:a, 1})
-
-    assert Treedoc.borrar(doc, 1) == {:error, :posicion_invalida}
-    assert Treedoc.borrar(doc, -1) == {:error, :posicion_invalida}
-    assert Treedoc.insertar(doc, 2, "b", {:a, 1}) == {:error, :posicion_invalida}
-    assert Treedoc.insertar(doc, 0, "bc", {:a, 1}) == {:error, :caracter_invalido}
-  end
-
   defp simular() do
-    sitios = %{1 => {:a, 1}, 2 => {:b, 1}, 3 => {:c, 1}}
-    replicas = %{1 => Treedoc.nuevo(), 2 => Treedoc.nuevo(), 3 => Treedoc.nuevo()}
+    nodos = [:a, :b, :c]
+    inicial = Map.new(nodos, fn n -> {n, %{doc: Treedoc.nuevo(), vc: %{}, espera: []}} end)
 
-    {replicas, deltas} =
-      Enum.reduce(1..20, {replicas, []}, fn _, {replicas, deltas} ->
-        k = Enum.random(1..3)
-        doc = recibir_alguno(replicas[k], deltas)
-        {doc, delta} = operacion_aleatoria(doc, sitios[k])
-        {Map.put(replicas, k, doc), [delta | deltas]}
+    {replicas, ops} =
+      Enum.reduce(1..25, {inicial, []}, fn _, {replicas, ops} ->
+        n = Enum.random(nodos)
+        {r, nuevas} = editar(recibir_alguna(replicas[n], ops), n)
+        {Map.put(replicas, n, r), ops ++ nuevas}
       end)
 
-    {[replicas[1], replicas[2], replicas[3]], deltas}
+    {Map.values(replicas), ops}
   end
 
-  defp recibir_alguno(doc, []) do
-    doc
+  defp recibir_alguna(r, []) do
+    r
   end
 
-  defp recibir_alguno(doc, deltas) do
+  defp recibir_alguna(r, ops) do
     if :rand.uniform(2) == 1 do
-      Treedoc.merge(doc, Enum.random(deltas))
+      recibir(r, Enum.random(ops))
     else
-      doc
+      r
     end
   end
 
-  defp operacion_aleatoria(doc, sitio) do
-    n = length(Treedoc.visibles(doc))
+  defp editar(r, n) do
+    visibles = length(Treedoc.visibles(r.doc))
+    seq0 = Map.get(r.vc, n, 0)
 
-    if n > 0 and :rand.uniform(3) == 1 do
-      Treedoc.borrar(doc, Enum.random(0..(n - 1)))
-    else
-      Treedoc.insertar(doc, Enum.random(0..n), Enum.random(["a", "b", "c"]), sitio)
-    end
+    ops =
+      if visibles > 0 and :rand.uniform(3) == 1 do
+        {:ok, [p]} = Treedoc.preparar_borrado(r.doc, Enum.random(0..(visibles - 1)), 1)
+        [%{op: :del, from: n, vc: Map.put(r.vc, n, seq0 + 1), pos: p}]
+      else
+        letras = String.graphemes(Enum.random(["a", "bc"]))
+        {:ok, ps} = Treedoc.preparar_insercion(r.doc, Enum.random(0..visibles), letras, seq0, n)
+
+        for {{p, c}, seq} <- Enum.with_index(ps, seq0 + 1) do
+          %{op: :ins, from: n, vc: Map.put(r.vc, n, seq), pos: p, ch: c}
+        end
+      end
+
+    r =
+      Enum.reduce(ops, r, fn op, r ->
+        %{r | doc: Treedoc.aplicar(r.doc, op), vc: Causal.entregar(r.vc, op)}
+      end)
+
+    {r, ops}
+  end
+
+  defp recibir(r, op) do
+    {vc, espera, aplicadas, _} = Causal.recibir(r.vc, r.espera, op)
+    doc = Enum.reduce(aplicadas, r.doc, fn o, d -> Treedoc.aplicar(d, o) end)
+    %{r | vc: vc, espera: espera, doc: doc}
+  end
+
+  defp entregar_todo(r, ops) do
+    r = Enum.reduce(ops, r, fn op, r -> recibir(r, op) end)
+    assert r.espera == []
+    r.doc
   end
 end

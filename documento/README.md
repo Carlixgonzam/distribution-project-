@@ -1,18 +1,29 @@
 # documento
 
-Shared text document. Every Raspberry Pi keeps a full copy of the document as a Treedoc CRDT and broadcasts its edits to all connected nodes. No central server.
+Shared text document. Every node keeps a full copy as an op-based Treedoc CRDT, applies the others' operations in causal order and broadcasts its own. No central server. It speaks the class contract, so it edits the same document as the other groups ([PROTOCOL.md](../PROTOCOL.md)). Why it converges: [CRDT.md](CRDT.md). Run everything below from this folder.
 
-The message format we use with the other groups is in [PROTOCOL.md](../PROTOCOL.md), and why it converges is in [CRDT.md](CRDT.md). Run everything below from this folder.
+## Editing (IEx on a laptop, or `ssh` to a Pi)
+
+```elixir
+CpdDoc.insertar(0, "Hola mundo")    # at a visible index
+CpdDoc.borrar(4, 6)                 # 6 chars from index 4
+CpdDoc.texto()
+CpdDoc.estado()                     # node, neighbours, clock, waiting operations
+CpdDoc.conectar("nombre@192.168.1.23")
+```
 
 ## Laptop
 
 ```sh
 mix deps.get
 MIX_TARGET=host mix test
-MIX_TARGET=host iex --name a@127.0.0.1 --cookie cpd2026 --erl "-kernel prevent_overlapping_partitions false" -S mix
+MIX_TARGET=host iex --name <name>@<your ip> --cookie cpd2026 \
+  --erl "-kernel inet_dist_listen_min 4218 inet_dist_listen_max 4228 prevent_overlapping_partitions false" -S mix
 ```
 
-Start a second node with `--name b@127.0.0.1`, run `Node.connect(:"a@127.0.0.1")`, then edit with `CpdDoc.Replica.insertar(0, "h")`, `CpdDoc.Replica.borrar(0)` and `CpdDoc.Replica.texto()`. Add `CPD_DOC_ARCHIVO=/some/file.bin` before the command to keep the document across restarts.
+- Nodes on the same network find each other by multicast within a few seconds. If not, `CpdDoc.conectar("<node>")`.
+- The log is `datos/<name>.log`. Never delete it and keep editing under the same name: pick another name instead.
+- `CPD_DOC_BARRIDO=on` also asks every address of the /24 for nodes. It is off on laptops so they don't sweep networks that aren't ours.
 
 ## Raspberry Pi 4
 
@@ -23,4 +34,4 @@ mix firmware
 mix burn
 ```
 
-`HOTSPOT_SSID` and `HOTSPOT_PSK` are the name and password of the router's Wi‑Fi. The Pi joins it, starts as `doc@<ip>` and tries to connect to every address of its subnet every 10 s, as long as the subnet is a /24 or smaller (see [PROTOCOL.md](../PROTOCOL.md)). The document is saved to `/data` every 5 s, so it survives reboots. SSH only accepts the public keys in `~/.ssh` of whoever built the firmware.
+`HOTSPOT_SSID` and `HOTSPOT_PSK` are the name and password of the router's Wi‑Fi. The Pi joins it and starts as `<hostname>-<epoch>@<ip>`. It announces itself by multicast every 2 s and asks every address of its /24 for nodes every 10 s. The log and the epoch live in `/data/cpd_doc`. `ssh nerves-XXXX.local` (its own hostname) opens IEx. SSH only accepts the public keys in `~/.ssh` of whoever built the firmware.

@@ -20,4 +20,7 @@ config :nerves_runtime,
        "a.nerves_fw_version" => "0.0.0"
      }}
 
-config :cpd_doc, archivo: System.get_env("CPD_DOC_ARCHIVO")
+config :cpd_doc,
+  datos: System.get_env("CPD_DOC_DATOS", "datos"),
+  barrido: System.get_env("CPD_DOC_BARRIDO") == "on",
+  arrancar: Mix.env() != :test

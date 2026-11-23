@@ -1,21 +1,17 @@
 defmodule CpdDoc.Treedoc do
-  def vacio() do
-    %{atomos: %{}, borrados: MapSet.new()}
-  end
-
   def nuevo() do
-    Map.merge(vacio(), %{contador: 0, ultimo: nil})
+    %{atomos: %{}, borrados: MapSet.new()}
   end
 
   def menor?([], []) do
     false
   end
 
-  def menor?([], [{bit, _} | _]) do
+  def menor?([], [{bit, _, _} | _]) do
     bit == 1
   end
 
-  def menor?([{bit, _} | _], []) do
+  def menor?([{bit, _, _} | _], []) do
     bit == 0
   end
 
@@ -39,90 +35,54 @@ defmodule CpdDoc.Treedoc do
     Enum.map_join(visibles(doc), fn {_, caracter} -> caracter end)
   end
 
-  def nuevo_posid(:inicio, :fin, dis) do
-    [{1, dis}]
+  def nuevo_posid(p, nil, seq, nodo) do
+    p ++ [{1, seq, nodo}]
   end
 
-  def nuevo_posid(:inicio, f, dis) do
-    f ++ [{0, dis}]
-  end
-
-  def nuevo_posid(p, :fin, dis) do
-    p ++ [{1, dis}]
-  end
-
-  def nuevo_posid(p, f, dis) do
-    if prefijo?(p, f) do
-      f ++ [{0, dis}]
+  def nuevo_posid(p, f, seq, nodo) do
+    if List.starts_with?(f, p) do
+      f ++ [{0, seq, nodo}]
     else
-      p ++ [{1, dis}]
+      p ++ [{1, seq, nodo}]
     end
   end
 
-  def posid_para(doc, p, f, dis) do
-    {_, sitio} = dis
-
-    if p == :inicio or p != doc.ultimo or (f != :fin and prefijo?(p, f)) do
-      nuevo_posid(p, f, dis)
-    else
-      hueco = siguiente_hueco(p, sitio)
-
-      if hueco != nil and not Map.has_key?(doc.atomos, hueco) and menor?(p, hueco) and
-           (f == :fin or menor?(hueco, f)) do
-        hueco
-      else
-        crecer(p, dis)
-      end
-    end
-  end
-
-  def niveles(h) do
-    if h <= 1 do
-      1
-    else
-      techo_log2(h, 0) + 1
-    end
-  end
-
-  def insertar(doc, i, caracter, sitio) do
-    orden = orden(doc)
-    visibles = sin_borrados(orden, doc.borrados)
-
-    cond do
-      not is_integer(i) or i < 0 or i > length(visibles) ->
-        {:error, :posicion_invalida}
-
-      not is_binary(caracter) or String.length(caracter) != 1 ->
-        {:error, :caracter_invalido}
-
-      true ->
-        p = anterior(visibles, i)
-        f = siguiente(orden, p)
-        contador = doc.contador + 1
-        posid = posid_para(doc, p, f, {contador, sitio})
-        delta = %{vacio() | atomos: %{posid => caracter}}
-        {%{merge(doc, delta) | contador: contador, ultimo: posid}, delta}
-    end
-  end
-
-  def borrar(doc, i) do
-    visibles = visibles(doc)
-
-    if is_integer(i) and i >= 0 and i < length(visibles) do
-      {posid, _} = Enum.at(visibles, i)
-      delta = %{vacio() | borrados: MapSet.new([posid])}
-      {merge(doc, delta), delta}
+  def preparar_insercion(doc, i, caracteres, seq0, nodo) do
+    if is_integer(i) and i >= 0 and i <= length(visibles(doc)) do
+      {:ok, colocar(doc, i, caracteres, seq0 + 1, nodo)}
     else
       {:error, :posicion_invalida}
     end
   end
 
-  def merge(a, b) do
-    %{
-      a
-      | atomos: Map.merge(a.atomos, b.atomos, fn _posid, x, y -> max(x, y) end),
-        borrados: MapSet.union(a.borrados, b.borrados)
-    }
+  def preparar_borrado(doc, i, n) do
+    visibles = visibles(doc)
+
+    if is_integer(i) and is_integer(n) and i >= 0 and n >= 0 and i + n <= length(visibles) do
+      {:ok, Enum.map(Enum.slice(visibles, i, n), fn {posid, _} -> posid end)}
+    else
+      {:error, :posicion_invalida}
+    end
+  end
+
+  def aplicar(doc, %{op: :ins, pos: posid, ch: caracter}) do
+    %{doc | atomos: Map.update(doc.atomos, posid, caracter, fn otro -> min(otro, caracter) end)}
+  end
+
+  def aplicar(doc, %{op: :del, pos: posid}) do
+    %{doc | borrados: MapSet.put(doc.borrados, posid)}
+  end
+
+  defp colocar(_doc, _i, [], _seq, _nodo) do
+    []
+  end
+
+  defp colocar(doc, i, [caracter | resto], seq, nodo) do
+    orden = orden(doc)
+    p = anterior(sin_borrados(orden, doc.borrados), i)
+    posid = nuevo_posid(p, siguiente(orden, p), seq, nodo)
+    doc = aplicar(doc, %{op: :ins, pos: posid, ch: caracter})
+    [{posid, caracter} | colocar(doc, i + 1, resto, seq + 1, nodo)]
   end
 
   defp sin_borrados(orden, borrados) do
@@ -130,7 +90,7 @@ defmodule CpdDoc.Treedoc do
   end
 
   defp anterior(_visibles, 0) do
-    :inicio
+    []
   end
 
   defp anterior(visibles, i) do
@@ -138,71 +98,18 @@ defmodule CpdDoc.Treedoc do
     posid
   end
 
-  defp siguiente([], :inicio) do
-    :fin
+  defp siguiente([], _p) do
+    nil
   end
 
-  defp siguiente([{f, _} | _], :inicio) do
+  defp siguiente([{f, _} | _], []) do
     f
   end
 
   defp siguiente(orden, p) do
     case Enum.drop_while(orden, fn {q, _} -> q != p end) do
       [_, {f, _} | _] -> f
-      _ -> :fin
+      _ -> nil
     end
-  end
-
-  defp crecer(p, dis) do
-    p ++ [{1, dis}] ++ List.duplicate({0, dis}, niveles(length(p)) - 1)
-  end
-
-  defp siguiente_hueco(p, sitio) do
-    {_, d} = List.last(p)
-    {_, dueno} = d
-    {prefijo, propio} = Enum.split_while(p, fn {_, x} -> x != d end)
-
-    case propio do
-      [{1, _} | rel] ->
-        if dueno == sitio and Enum.all?(rel, fn {_, x} -> x == d end) do
-          sucesor(prefijo ++ [{1, d}], rel, d, niveles(length(prefijo)))
-        else
-          nil
-        end
-
-      _ ->
-        nil
-    end
-  end
-
-  defp sucesor(raiz, rel, d, k) do
-    if length(rel) < k - 1 do
-      raiz ++ rel ++ [{1, d}] ++ List.duplicate({0, d}, k - 2 - length(rel))
-    else
-      case Enum.drop_while(Enum.reverse(rel), fn {bit, _} -> bit == 1 end) do
-        [] -> nil
-        [_ | resto] -> raiz ++ Enum.reverse(resto)
-      end
-    end
-  end
-
-  defp techo_log2(h, k) do
-    if Integer.pow(2, k) >= h do
-      k
-    else
-      techo_log2(h, k + 1)
-    end
-  end
-
-  defp prefijo?([], _) do
-    true
-  end
-
-  defp prefijo?([x | r1], [x | r2]) do
-    prefijo?(r1, r2)
-  end
-
-  defp prefijo?(_, _) do
-    false
   end
 end

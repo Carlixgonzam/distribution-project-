@@ -5,7 +5,12 @@ defmodule CpdDoc.Application do
 
   @impl true
   def start(_type, _args) do
-    children = [CpdDoc.Descubrimiento, CpdDoc.Replica] ++ target_children()
+    children =
+      if Application.get_env(:cpd_doc, :arrancar, true) do
+        [CpdDoc.Replica, CpdDoc.Descubrimiento] ++ target_children()
+      else
+        []
+      end
 
     opts = [strategy: :one_for_one, name: CpdDoc.Supervisor]
     Supervisor.start_link(children, opts)

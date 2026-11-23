@@ -25,7 +25,7 @@ defmodule CpdDoc.MixProject do
       elixir: "~> 1.20",
       archives: [nerves_bootstrap: "~> 1.17"],
       listeners: listeners(Mix.target(), Mix.env()),
-      elixirc_paths: elixirc_paths(Mix.target()),
+      elixirc_paths: elixirc_paths(Mix.target(), Mix.env()),
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       releases: [{@app, release()}]
@@ -97,6 +97,7 @@ defmodule CpdDoc.MixProject do
   # defp listeners(:host, :dev), do: [Phoenix.CodeReloader]
   defp listeners(_, _), do: []
 
-  defp elixirc_paths(:host), do: ["lib"]
-  defp elixirc_paths(_), do: ["lib", "lib_target"]
+  defp elixirc_paths(:host, :test), do: ["lib", "test/support"]
+  defp elixirc_paths(:host, _), do: ["lib"]
+  defp elixirc_paths(_, _), do: ["lib", "lib_target"]
 end

@@ -92,7 +92,7 @@ config :mdns_lite,
   # because otherwise any of the devices may respond to nerves.local leading to
   # unpredictable behavior.
 
-  hosts: [:hostname, "nerves"],
+  hosts: [:hostname],
   ttl: 120,
 
   # Advertise the following services over mDNS.
@@ -114,7 +114,9 @@ config :mdns_lite,
     }
   ]
 
-config :cpd_doc, archivo: "/data/cpd_doc/documento.bin"
+config :cpd_doc,
+  historial: "/data/cpd_doc/historial.log",
+  epoca: "/data/cpd_doc/epoca"
 
 # Import target specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.

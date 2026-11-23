@@ -1,6 +1,6 @@
-# Shared document protocol, v1 (draft)
+# Shared document protocol
 
-What every group has to match so all nodes edit one document. Anything not listed here is up to each group.
+All the groups edit one document with the op-based Treedoc contract of the class, written by `fepecas/treedoc` in [docs/INTEGRATION.md](https://github.com/fepecas/treedoc/blob/main/docs/INTEGRATION.md) and its `DESIGN.md` (sections 3 to 6). That document is the reference. This file is the short version of what our nodes do to match it.
 
 ## Network
 
@@ -8,151 +8,54 @@ What every group has to match so all nodes edit one document. Anything not liste
 - The router has to:
   - use WPA2‑Personal, or WPA2/WPA3 mixed. Our Pis connect with WPA‑PSK, so a WPA3‑only network won't work.
   - have client isolation (AP or guest isolation) off. With it on, devices get an IP but can't reach each other.
-  - hand out addresses in a /24, e.g. `192.168.1.x` with mask `255.255.255.0`. Our Pis only sweep the subnet on their own when it is /24 or smaller. On a bigger network someone has to run `Node.connect` by hand.
-- Node name: `doc@<ipv4>`, e.g. `doc@192.168.1.23`. Long names only (`--name`, never `--sname`).
-- Cookie: `cpd2026`.
-- Connecting to any one node is enough, Erlang connects you to the rest. Our Pis also try `Node.connect` on every address of their subnet every 10 s.
-- From a laptop: `iex --name doc@<your ip> --cookie cpd2026 --erl "-kernel prevent_overlapping_partitions false" -S mix`, then `Node.connect(:"doc@<ip of any node>")`.
-- Recommended: start every node with `-kernel prevent_overlapping_partitions false`. With the OTP default (`true`), when one link drops `global` also cuts the node's other connections and it stays alone until something reconnects it. Nothing here uses global names, so there is nothing to protect.
+  - let multicast through (discovery). If it doesn't, connect by hand with `Node.connect/1`.
+- Cookie `cpd2026`, long names (`--name name@IPv4`, never `--sname`, never `.local`).
+- Ports: TCP 4369 (epmd), TCP 4218 to 4228 (distribution), UDP 45892 (discovery). Laptops have to allow them in their firewall.
+- Start every node with `-kernel prevent_overlapping_partitions false`. With the OTP default, when one link drops `global` also cuts the node's other links. Nothing here uses global names.
 
-## Process
+## Node names
 
-Each node registers a process as `:cpd_doc`. It must accept plain messages (`send/2`). Accepting `GenServer.cast/2` as well is recommended.
+- Our Pis: `<hostname>-<epoch>@<IPv4>`, e.g. `nerves-1a2b-3f9c07@192.168.1.23`. The epoch is 6 random hex chars kept in `/data` next to the operation log, so a Pi whose SD card is burned again comes back with a new name and never reuses a sequence number.
+- Laptops: any `<name>@<IPv4>`, as long as no other machine ever uses the same name. The log is `datos/<name>.log`; deleting it and editing under the same name again would reuse sequence numbers.
 
-## Message
+## Process and messages
 
-One message for both deltas and full states:
+A process registered as `Crdt.Replica` receives `GenServer.cast/2`:
 
 ```elixir
-{:cpd, 1, node(), {:estado, atoms, tombstones}}
-
-atoms       :: [{posid, char}]
-tombstones  :: [posid]
-posid       :: [{bit, {counter, {node, incarnation}}}]   # non-empty
-bit         :: 0 | 1
-counter     :: integer, +1 on every local insert
-node        :: atom, node() of the writer
-incarnation :: integer, random at startup, e.g. :rand.uniform(1_000_000_000)
-char        :: binary, exactly one grapheme when you send it
+{:remote, %{op: :ins, from: node, vc: %{node => n}, pos: [{bit, seq, node}], ch: "a"}}
+{:remote, %{op: :del, from: node, vc: %{node => n}, pos: [{bit, seq, node}]}}
+{:hello, node}   # "send me your whole history again"
 ```
 
-Sending:
-
-- After every local insert or delete, send only that change.
-- On `{:nodeup, _}` and every 30 s, send your whole state.
-- Send to `{:cpd_doc, n}` for every `n` in `Node.list()`.
-- Deleting never removes an atom. Its posid goes into the tombstones.
-
-Receiving. These rules have to be identical on every node, otherwise documents drift apart:
-
-1. Accept the message only if it has exactly the shape above: proper lists, `bit` is 0 or 1, `counter` and `incarnation` are integers, `node` is an atom, `char` is a binary, and every posid is non-empty.
-2. Anything else, drop the whole message. No partial merges, and never crash.
-3. Don't check `char` beyond `is_binary`. If one group rejected a character that the others keep, the documents would differ.
-4. Merge = union of atoms + union of tombstones.
-5. If the same posid shows up with two different chars, in one message or across messages, keep `max(a, b)` (Erlang term order).
+- `vc[from]` is the number of the operation on its node: 1, 2, 3… with no gaps and no reuse. `vc[k]` for any other `k` is how many operations of `k` the origin had applied.
+- `pos` is a path from the root. Bit 0 is left, 1 is right, and `{seq, node}` is the disambiguator. The last step carries the `{seq, from}` of the operation.
+- `ch` is exactly one grapheme.
+- A malformed message is ignored. It never crashes our replica.
 
 ## Order
 
-The text is the atoms whose posid is not a tombstone, sorted with this function:
+The text is the in-order walk of the tree: left subtree, the char, right subtree, with steps of the same bit ordered by `{seq, node}`:
 
 ```elixir
 def menor?([], []), do: false
-def menor?([], [{bit, _} | _]), do: bit == 1
-def menor?([{bit, _} | _], []), do: bit == 0
+def menor?([], [{bit, _, _} | _]), do: bit == 1
+def menor?([{bit, _, _} | _], []), do: bit == 0
 def menor?([x | r1], [x | r2]), do: menor?(r1, r2)
 def menor?([x | _], [y | _]), do: x < y
 ```
 
-This is the infix order of section 3.1 of the Treedoc paper. A posid is a path from a virtual root, and each step is `{bit, disambiguator}`: 0 goes left, 1 goes right. Steps with the same bit are mini-nodes of one major node, ordered by `{counter, {node, incarnation}}`, counter first. The five clauses are the paper's three cases:
+Deleted chars stay as tombstones.
 
-- `id1` is a prefix of `id2` and `id2` continues with bit 1: `id1 < id2` (clause 2).
-- `id2` is a prefix of `id1` and `id1` continues with bit 0: `id1 < id2` (clause 3).
-- otherwise compare the first step where they differ (clause 5). With equal bits, the disambiguator decides.
+## Delivery
 
-One difference with the paper: we put a disambiguator on every step, not only where it is needed, so every step names one mini-node. The order is still total and dense, and comparing is a plain list walk. V6 and V7 below are Figures 3 and 4 of the paper written this way.
+- After every local edit, one `{:remote, op}` per char to every node in `Node.list()`. Nothing is sent before the operation is on disk (`fsync`).
+- An operation from `i` with clock `m` is a duplicate if `m[i] <= vc[i]`, is applied if `m[i] == vc[i] + 1` and `m[k] <= vc[k]` for every other `k`, and waits otherwise. After each one applied, the waiting ones are checked again.
+- Every operation applied from the network is forwarded once, unchanged, to every node.
+- The whole history, in applied order, is sent again on `:nodeup`, on `{:hello, node}`, and when the replica starts with nodes already connected. On start the replica also sends `{:hello, node()}`.
 
-## Deleting
+## Discovery
 
-- Deleting adds the posid to the tombstones. The atom stays, because the next new posid is computed from the full order, tombstones included.
-- Tombstones are never removed and a deleted character never comes back.
-- A tombstone counts even if its atom hasn't arrived yet (V4). Deleting twice is the same as deleting once.
+Every 2 s, one UDP packet `crdt-treedoc-1 <node name>` to `233.252.1.32:45892`, TTL 1. On hearing one of another node not yet connected, `Node.connect/1`. Our Pis also ask epmd on every address of their /24 which nodes it runs, every 10 s. Connecting to any one node is enough: Erlang connects you to the rest.
 
-## New posids
-
-`p` and `f` are the neighbours of the new character in the full order, tombstones included. `:inicio` and `:fin` stand for the edges, and `dis = {counter + 1, {node(), incarnation}}`.
-
-| case | new posid |
-|---|---|
-| empty document | `[{1, dis}]` |
-| `p == :inicio` | `f ++ [{0, dis}]` |
-| `f == :fin` | `p ++ [{1, dis}]` |
-| `p` is a prefix of `f` | `f ++ [{0, dis}]` |
-| otherwise | `p ++ [{1, dis}]` |
-
-Any rule works as long as the new posid sorts strictly between `p` and `f` and is never reused. When a node keeps typing right after its own last character, we use the balancing from section 4.1 of the Treedoc paper: the tree grows `ceil(log2(length(p))) + 1` levels at once, and the next characters fill the empty slots of that subtree in infix order. If you do the same, only fill slots whose steps carry your own `{node, incarnation}`.
-
-## Test vectors
-
-Feed each one as a single message into an empty document. The text has to match.
-
-```elixir
-# V1, in-order walk
-atoms = [
-  {[{1, {1, {:a, 1}}}], "c"},
-  {[{1, {1, {:a, 1}}}, {0, {2, {:a, 1}}}], "b"},
-  {[{1, {1, {:a, 1}}}, {1, {3, {:a, 1}}}], "d"},
-  {[{1, {1, {:a, 1}}}, {0, {2, {:a, 1}}}, {0, {4, {:a, 1}}}], "a"}
-]
-tombstones = []
-# => "abcd"
-
-# V2, siblings with the same bit: counter first, then node. A subtree stays with its parent.
-atoms = [
-  {[{1, {2, {:a, 1}}}], "Z"},
-  {[{1, {1, {:b, 1}}}], "Y"},
-  {[{1, {1, {:a, 1}}}, {1, {5, {:a, 1}}}], "x"},
-  {[{1, {1, {:a, 1}}}], "X"}
-]
-tombstones = []
-# => "XxYZ"
-
-# V3, V1 with "b" deleted
-tombstones = [[{1, {1, {:a, 1}}}, {0, {2, {:a, 1}}}]]
-# => "acd"
-
-# V4, a tombstone that arrives before its atom still hides it
-atoms = []
-tombstones = [[{1, {9, {:a, 1}}}]]
-# => "", and after receiving {[{1, {9, {:a, 1}}}], "q"} it is still ""
-
-# V5, same posid with two chars
-atoms = [{[{1, {1, {:a, 1}}}], "x"}, {[{1, {1, {:a, 1}}}], "y"}]
-tombstones = []
-# => "y"
-
-# V6, Figure 3 of the paper: W and Y inserted at the same time between c and d
-c = [{1, {1, {:c, 1}}}]
-b = c ++ [{0, {1, {:b, 1}}}]
-e = c ++ [{1, {1, {:e, 1}}}]
-d = e ++ [{0, {1, {:d, 1}}}]
-w = d ++ [{0, {1, {:w, 1}}}]
-y = d ++ [{0, {1, {:y, 1}}}]
-atoms = [
-  {c, "c"}, {b, "b"}, {b ++ [{0, {1, {:a, 1}}}], "a"},
-  {e, "e"}, {d, "d"}, {e ++ [{1, {1, {:f, 1}}}], "f"},
-  {w, "W"}, {y, "Y"}, {y ++ [{1, {1, {:z, 1}}}], "Z"}
-]
-tombstones = []
-# => "abcWYZdef"
-
-# V7, Figure 4: V6 plus X between the mini-siblings W and Y
-atoms = [{w ++ [{1, {1, {:x, 1}}}], "X"} | atoms]
-# => "abcWXYZdef"
-```
-
-Our implementation passes all seven in `documento/test/protocolo_test.exs`. Why this converges is in [documento/CRDT.md](documento/CRDT.md).
-
-## Still open
-
-- 30 s for the full-state resend, or longer if the network gets slow?
-- Discovery by mDNS and the API exchange belong to the other assignment, see [adhoc/PROTOCOL.md](adhoc/PROTOCOL.md).
+Our implementation, tests and why it converges: [documento/](documento/).

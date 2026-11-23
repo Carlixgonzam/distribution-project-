@@ -5,66 +5,76 @@ defmodule CpdDoc.Red do
     GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
   end
 
+  def nombre(ip) do
+    String.to_atom("#{host()}-#{epoca()}@#{ip}")
+  end
+
   def init(:ok) do
     VintageNet.subscribe(["interface", "wlan0", "addresses"])
     send(self(), :revisar)
-    Process.send_after(self(), :buscar, 10_000)
-    {:ok, %{ip: nil, prefijo: nil}}
-  end
-
-  def handle_info(:buscar, estado) do
-    if estado.ip != nil and Node.alive?() do
-      CpdDoc.Descubrimiento.descubrir(estado.ip, estado.prefijo)
-    end
-
-    Process.send_after(self(), :buscar, 10_000)
-    {:noreply, estado}
+    {:ok, %{ip: nil}}
   end
 
   def handle_info(:revisar, estado) do
-    direcciones = VintageNet.get(["interface", "wlan0", "addresses"], [])
-    {:noreply, actualizar(ipv4(direcciones), estado)}
+    {:noreply, actualizar(ipv4(VintageNet.get(["interface", "wlan0", "addresses"], [])), estado)}
   end
 
   def handle_info({VintageNet, _propiedad, _viejo, nuevo, _meta}, estado) do
     {:noreply, actualizar(ipv4(nuevo), estado)}
   end
 
-  defp actualizar(red, estado) do
-    if red == estado and Node.alive?() do
+  defp actualizar(ip, estado) do
+    if ip == estado.ip and Node.alive?() do
       estado
     else
-      detener_nodo()
-      arrancar_nodo(red)
+      if Node.alive?() do
+        IO.puts("deteniendo nodo #{inspect(Node.self())}")
+        Node.stop()
+      end
+
+      arrancar(ip)
     end
   end
 
-  defp detener_nodo() do
-    if Node.alive?() do
-      IO.puts("deteniendo nodo #{inspect(Node.self())}")
-      Node.stop()
-    end
-  end
-
-  defp arrancar_nodo(nil) do
+  defp arrancar(nil) do
     IO.puts("wlan0 sin IPv4, esperando")
-    %{ip: nil, prefijo: nil}
+    %{ip: nil}
   end
 
-  defp arrancar_nodo(red) do
+  defp arrancar(ip) do
     System.cmd("epmd", ["-daemon"])
-    nombre = String.to_atom("doc@" <> red.ip)
+    nombre = nombre(ip)
 
     case Node.start(nombre, name_domain: :longnames) do
       {:ok, _} ->
         Node.set_cookie(:cpd2026)
         IO.puts("nodo arrancado: #{inspect(Node.self())}")
-        red
+        %{ip: ip}
 
       {:error, razon} ->
         IO.puts("no se pudo arrancar #{inspect(nombre)}: #{inspect(razon)}, reintento en 5 s")
         Process.send_after(self(), :revisar, 5000)
-        %{ip: nil, prefijo: nil}
+        %{ip: nil}
+    end
+  end
+
+  defp host() do
+    {:ok, h} = :inet.gethostname()
+    String.replace(to_string(h), ~r/[^A-Za-z0-9_-]/, "-")
+  end
+
+  defp epoca() do
+    archivo = Application.fetch_env!(:cpd_doc, :epoca)
+
+    case File.read(archivo) do
+      {:ok, e} when byte_size(e) == 6 ->
+        e
+
+      _ ->
+        e = Base.encode16(:crypto.strong_rand_bytes(3), case: :lower)
+        File.mkdir_p!(Path.dirname(archivo))
+        File.write!(archivo, e, [:sync])
+        e
     end
   end
 
@@ -75,7 +85,7 @@ defmodule CpdDoc.Red do
   defp ipv4(direcciones) do
     case Enum.find(direcciones, fn d -> d.family == :inet end) do
       nil -> nil
-      d -> %{ip: Enum.join(Tuple.to_list(d.address), "."), prefijo: d.prefixlen}
+      d -> Enum.join(Tuple.to_list(d.address), ".")
     end
   end
 end
