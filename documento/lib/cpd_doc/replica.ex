@@ -54,6 +54,10 @@ defmodule CpdDoc.Replica do
     {:reply, Enum.reverse(estado.historial), estado}
   end
 
+  def handle_call(:documento, _de, estado) do
+    {:reply, estado.doc, estado}
+  end
+
   def handle_call(:estado, _de, estado) do
     resumen = %{
       nodo: node(),

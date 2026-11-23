@@ -1,5 +1,6 @@
 defmodule CpdDoc do
   alias CpdDoc.Mensaje
+  alias CpdDoc.Vista
 
   def insertar(i, texto) do
     llamar({:local, {:insertar, i, texto}})
@@ -23,6 +24,26 @@ defmodule CpdDoc do
 
   def historial() do
     llamar(:historial)
+  end
+
+  def documento() do
+    llamar(:documento)
+  end
+
+  def ver() do
+    Vista.ver()
+  end
+
+  def raw() do
+    Vista.raw()
+  end
+
+  def mirar() do
+    mirar(60)
+  end
+
+  def mirar(segundos) do
+    Vista.mirar(segundos)
   end
 
   def conectar(nodo) when is_atom(nodo) do
