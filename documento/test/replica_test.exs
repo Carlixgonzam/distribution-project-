@@ -18,6 +18,17 @@ defmodule CpdDoc.ReplicaTest do
     %{op: :ins, from: :x, vc: %{x: seq}, pos: [{1, seq, :x}], ch: ch}
   end
 
+  test "la vista se imprime con y sin réplica" do
+    assert capture_io(fn -> CpdDoc.ver() end) =~ "no se pudo leer la réplica: :sin_replica"
+    assert capture_io(fn -> CpdDoc.raw() end) =~ "no se pudo leer la réplica: :sin_replica"
+
+    start_supervised!(CpdDoc.Replica)
+
+    assert CpdDoc.documento() == CpdDoc.Treedoc.nuevo()
+    assert capture_io(fn -> CpdDoc.ver() end) =~ "texto     0 caracteres"
+    assert capture_io(fn -> CpdDoc.raw() end) == "\n"
+  end
+
   test "sin red se lee pero no se edita, y ninguna entrada inválida la tumba" do
     pid = start_supervised!(CpdDoc.Replica)
 
