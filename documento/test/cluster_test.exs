@@ -116,6 +116,30 @@ defmodule CpdDoc.ClusterTest do
     assert eventualmente(fn -> iguales?(c.todos, "C ase AB") end)
   end
 
+  test "salir y unirse: edita fuera de línea sin desconectar el nodo y al volver converge", c do
+    malla(c)
+    :ok = llamar(c.pa, CpdDoc, :insertar, [0, "base"])
+    assert eventualmente(fn -> iguales?(c.todos, "base") end)
+
+    :ok = llamar(c.pc, CpdDoc, :salir)
+    :ok = llamar(c.pc, CpdDoc, :insertar, [0, "C "])
+    :ok = llamar(c.pa, CpdDoc, :insertar, [4, " A"])
+    :ok = llamar(c.pb, CpdDoc, :borrar, [0, 1])
+
+    assert eventualmente(fn -> iguales?([c.pa, c.pb], "ase A") end)
+    assert llamar(c.pc, CpdDoc, :texto) == "C base"
+    assert Enum.sort(llamar(c.pc, Node, :list)) == Enum.sort([c.a, c.b])
+    refute Map.has_key?(llamar(c.pa, CpdDoc, :estado).reloj, c.c)
+    assert llamar(c.pc, CpdDoc, :estado).descartadas > 0
+
+    :ok = llamar(c.pc, CpdDoc, :unirse)
+    assert eventualmente(fn -> iguales?(c.todos, "C ase A") end)
+    assert llamar(c.pa, CpdDoc, :estado).reloj[c.c] == 2
+
+    :ok = llamar(c.pc, CpdDoc, :insertar, [7, "!"])
+    assert eventualmente(fn -> iguales?(c.todos, "C ase A!") end)
+  end
+
   test "reinicio: la réplica vuelve desde su log, se pone al día y sigue numerando", c do
     malla(c)
     :ok = llamar(c.pb, CpdDoc, :insertar, [0, "ab"])

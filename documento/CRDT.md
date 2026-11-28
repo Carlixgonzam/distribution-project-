@@ -41,9 +41,11 @@ Messages can be lost when a link drops, so delivery is made reliable:
 - Every operation applied from the network is forwarded once. If the origin reached only one node before going down, the others still get it.
 - On `:nodeup` and on `{:hello, node}`, every node sends its whole history again. A node that was cut off, or that restarted, catches up.
 
+**Offline and back** (`CpdDoc.salir/0`, `CpdDoc.unirse/0`). Offline, the replica drops every remote operation and sends nothing, while the Erlang node stays connected: a partition made at the replica, not at the network. Dropping is safe because nothing is lost: every node keeps its whole history, including the operations it got from others. On `unirse` the replica sends its history and `{:hello, node()}`; every neighbour answers with its own history, and the rule above drops what it already had and applies the rest in causal order. The offline edits were made on a clock that doesn't include what was dropped, so they are concurrent with it and commute (§2). It ends the same as a partition that heals.
+
 Erlang keeps the order of messages between two nodes, so waiting only shows up with three or more nodes: an operation forwarded by one path arrives before its dependency from the origin, or a reconnection replays histories.
 
-Tests: `causal_test.exs` (every permutation of a causal history ends the same), and in `cluster_test.exs`, with real nodes: forwarding in a chain A‑B‑C, a partition that heals, a late node.
+Tests: `causal_test.exs` (every permutation of a causal history ends the same), and in `cluster_test.exs`, with real nodes: forwarding in a chain A‑B‑C, a partition that heals, a late node, "salir y unirse…". In `replica_test.exs`, offline survives a restart.
 
 ## 4. Sequence numbers never repeat
 
@@ -112,6 +114,9 @@ Everything that comes from outside is checked, and every process answers anythin
 | a single grapheme of many bytes (accents stacked on one letter), a path of 20 000 steps | accepted, as the contract allows: rejecting what another group accepts would leave every later operation of that node waiting for ever | `mensaje_test.exs`, `cluster_test.exs` |
 | operations out of order, repeated, or waiting for one that never comes | wait in a buffer of at most 50 000; duplicates dropped | `causal_test.exs`, 1000 random histories |
 | a log cut at any byte, or with any byte changed | truncated, or the valid prefix kept and the file moved aside | `historial_test.exs` |
+| a `ch` that isn't valid UTF‑8 and starts with a pictograph (`<<194, 169, 224>>`, `©` then a cut char) | rejected. Before, `String.first/1` raised inside the check and took the replica down | `mensaje_test.exs` |
+| the disk fails while writing a remote operation | it isn't applied and the clock doesn't move, so it is taken when it arrives again (the next history sent). Before, it was applied without being in the log, and after a restart a later operation of the same node made it look like a duplicate for ever | `replica_test.exs` |
+| any `cast` or `call` to `CpdDoc.Descubrimiento` (or `CpdDoc.Red` on the Pi) | ignored, an unknown call answers `{:error, :desconocida}`. Before, 4 of them in 5 s made the supervisor give up and took the replica down with it | `descubrimiento_test.exs` |
 | a log that can't be opened | the replica doesn't start, calls answer `{:error, :sin_replica}` | `replica_test.exs` |
 | the replica killed | the supervisor starts it again from its log and it catches up | `cluster_test.exs` |
 | the network lost (`Node.stop`) and back | edits go on under the last name and are sent on reconnect | `cluster_test.exs` |
@@ -122,7 +127,7 @@ Everything that comes from outside is checked, and every process answers anythin
 
 ## 9. Why op-based
 
-The first version of this project was state-based (delta-state, Almeida, Shoker, Baquero 2018), in the history of this repository. Both are valid. [A] Table 2 compares them:
+The first version of this project was state-based (delta-state, Almeida, Shoker, Baquero 2018), in the history of this repository. Both are valid. [A] Table 2 compares them (the first three rows are its "messaging", "open vs. closed systems" and "message size"; the last one is ours):
 
 | | op-based (now) | delta-state (before) |
 |---|---|---|
@@ -135,7 +140,7 @@ We moved to op-based so all the groups of the class edit one document with the s
 
 ## 10. Limitations
 
-- **Tombstones and history grow for ever.** Removing them needs causal stability or a distributed commit ([T] §4.2, [A] §4.2), and needs every participant known. Fine for a demo.
+- **Tombstones and history grow for ever.** Removing them needs causal stability or a distributed commit ([T] §4.2, [A] §4.1 and §4.2), and needs every participant known. Fine for a demo.
 - **The whole history is sent again on every `:nodeup`,** to every neighbour. With a few thousand operations it is fine.
 - **Typing char by char at the end still makes the path one step longer per char.** Pastes are balanced (§5), but the §4.1 balancing of [T] for separate keystrokes reuses disambiguators, and the contract asks the last step to carry the operation's own one. Hundreds of typed chars are fine; thousands typed in one place slow the document down.
 - **The clock gets one entry per node name.** A Pi that changes IP has a new name, so a new entry.

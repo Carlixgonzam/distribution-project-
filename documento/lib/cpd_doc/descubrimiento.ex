@@ -58,6 +58,14 @@ defmodule CpdDoc.Descubrimiento do
     {:ok, %{socket: nil, ip: nil, fallidos: %{}, barriendo: nil, nombres: MapSet.new()}}
   end
 
+  def handle_call(_otra, _de, estado) do
+    {:reply, {:error, :desconocida}, estado}
+  end
+
+  def handle_cast(_otro, estado) do
+    {:noreply, estado}
+  end
+
   def handle_info(:anunciar, estado) do
     Process.send_after(self(), :anunciar, @anunciar_cada)
     estado = abrir_socket(estado, ip_propia())

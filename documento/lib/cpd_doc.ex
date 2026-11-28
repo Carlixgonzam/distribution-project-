@@ -22,6 +22,14 @@ defmodule CpdDoc do
     llamar(:estado)
   end
 
+  def salir() do
+    llamar(:salir)
+  end
+
+  def unirse() do
+    llamar(:unirse)
+  end
+
   def historial() do
     llamar(:historial)
   end

@@ -34,6 +34,7 @@ defmodule CpdDoc.MensajeTest do
       %{@ins | ch: "ab"},
       %{@ins | ch: ""},
       %{@ins | ch: <<255>>},
+      %{@ins | ch: <<194, 169, 224>>},
       %{@ins | ch: ~c"a"},
       %{@ins | from: "texto"},
       %{@ins | from: nil},

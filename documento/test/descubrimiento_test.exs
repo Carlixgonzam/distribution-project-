@@ -85,6 +85,17 @@ defmodule CpdDoc.DescubrimientoTest do
     assert {:noreply, ^final} = Descubrimiento.handle_info(:mensaje_raro, final)
   end
 
+  test "calls y casts desconocidos no lo tumban (el supervisor no se rinde)" do
+    pid = start_supervised!(CpdDoc.Descubrimiento)
+
+    for _ <- 1..10 do
+      GenServer.cast(CpdDoc.Descubrimiento, :basura)
+    end
+
+    assert GenServer.call(CpdDoc.Descubrimiento, :basura) == {:error, :desconocida}
+    assert Process.whereis(CpdDoc.Descubrimiento) == pid
+  end
+
   defp basura() do
     case :rand.uniform(4) do
       1 -> :crypto.strong_rand_bytes(:rand.uniform(200))

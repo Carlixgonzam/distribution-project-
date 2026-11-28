@@ -36,6 +36,7 @@ defmodule CpdDoc.Vista do
       "espera    #{length(estado.en_espera)}    recibidas #{estado.recibidas}    duplicadas #{estado.duplicadas}    ignoradas #{estado.ignoradas}"
     ] ++
       bloqueado(estado.bloqueado) ++
+      fuera(Map.get(estado, :fuera, false), Map.get(estado, :descartadas, 0)) ++
       ["", "texto     #{String.length(Treedoc.texto(doc))} caracteres"] ++
       texto(Treedoc.texto(doc)) ++
       [
@@ -102,6 +103,16 @@ defmodule CpdDoc.Vista do
   end
 
   defp bloqueado(_) do
+    []
+  end
+
+  defp fuera(true, descartadas) do
+    [
+      "FUERA DE LÍNEA  no envía ni recibe (#{descartadas} descartadas); edita local y vuelve con CpdDoc.unirse()"
+    ]
+  end
+
+  defp fuera(_, _) do
     []
   end
 

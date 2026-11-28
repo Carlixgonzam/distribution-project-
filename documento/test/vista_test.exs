@@ -43,6 +43,12 @@ defmodule CpdDoc.VistaTest do
     assert panel =~ "carla #1  insertó \"h\""
     assert panel =~ "carla #2  borró \"!\""
     refute panel =~ "BLOQUEADO"
+    refute panel =~ "FUERA DE LÍNEA"
+
+    fuera = Map.merge(estado(), %{fuera: true, descartadas: 3})
+
+    assert Enum.join(Vista.panel(fuera, doc, ops()), "\n") =~
+             "FUERA DE LÍNEA  no envía ni recibe (3 descartadas)"
   end
 
   test "un documento vacío y una réplica bloqueada se muestran sin fallar" do
