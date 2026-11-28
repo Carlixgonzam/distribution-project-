@@ -28,6 +28,8 @@ defmodule CpdDoc.Mensaje do
 
   def caracter?(ch) when is_binary(ch) do
     String.first(ch) == ch and String.valid?(ch)
+  rescue
+    ArgumentError -> false
   end
 
   def caracter?(_) do

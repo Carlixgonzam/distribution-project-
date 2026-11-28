@@ -46,6 +46,30 @@ defmodule CpdDoc.Replica do
     {:reply, {:error, :argumentos_invalidos}, estado}
   end
 
+  def handle_call(:salir, _de, estado) do
+    case File.write(marca_fuera(estado.archivo), "", [:sync]) do
+      :ok -> {:reply, :ok, %{estado | fuera: true}}
+      {:error, razon} -> {:reply, {:error, {:disco, razon}}, estado}
+    end
+  end
+
+  def handle_call(:unirse, _de, %{fuera: false} = estado) do
+    {:reply, :ok, estado}
+  end
+
+  def handle_call(:unirse, _de, estado) do
+    case File.rm(marca_fuera(estado.archivo)) do
+      resultado when resultado in [:ok, {:error, :enoent}] ->
+        estado = %{estado | fuera: false}
+        enviar_historial(estado)
+        difundir(estado, {:hello, node()})
+        {:reply, :ok, estado}
+
+      {:error, razon} ->
+        {:reply, {:error, {:disco, razon}}, estado}
+    end
+  end
+
   def handle_call(:texto, _de, estado) do
     {:reply, Treedoc.texto(estado.doc), estado}
   end
@@ -72,6 +96,8 @@ defmodule CpdDoc.Replica do
       duplicadas: estado.duplicadas,
       ignoradas: estado.ignoradas,
       bloqueado: estado.bloqueado,
+      fuera: estado.fuera,
+      descartadas: estado.descartadas,
       archivo: estado.archivo
     }
 
@@ -80,6 +106,10 @@ defmodule CpdDoc.Replica do
 
   def handle_call(_otra, _de, estado) do
     {:reply, {:error, :desconocida}, estado}
+  end
+
+  def handle_cast({:remote, _crudo}, %{fuera: true} = estado) do
+    {:noreply, %{estado | descartadas: estado.descartadas + 1}}
   end
 
   def handle_cast({:remote, crudo}, estado) do
@@ -122,14 +152,16 @@ defmodule CpdDoc.Replica do
         archivo: archivo,
         yo: nombre_actual(),
         bloqueado: bloqueado,
+        fuera: File.exists?(marca_fuera(archivo)),
         recibidas: 0,
+        descartadas: 0,
         duplicadas: 0,
         ignoradas: 0
       }
 
       if Node.list() != [] do
         enviar_historial(estado)
-        difundir({:hello, node()})
+        difundir(estado, {:hello, node()})
       end
 
       {:ok, estado}
@@ -282,7 +314,7 @@ defmodule CpdDoc.Replica do
         estado = aplicar(ops, estado)
 
         for op <- ops do
-          difundir({:remote, op})
+          difundir(estado, {:remote, op})
         end
 
         {:reply, :ok, anotar(estado, ops)}
@@ -300,8 +332,16 @@ defmodule CpdDoc.Replica do
 
   defp remota(op, estado) do
     {vc, espera, aplicadas, resultado} = Causal.recibir(estado.vc, estado.espera, op)
-    estado = contar(%{estado | vc: vc, espera: recortar(espera)}, resultado)
-    aplicar_remotas(aplicadas, estado)
+
+    case Historial.agregar(estado.fd, aplicadas) do
+      :ok ->
+        estado = contar(%{estado | vc: vc, espera: recortar(espera)}, resultado)
+        aplicar_remotas(aplicadas, estado)
+
+      {:error, razon} ->
+        IO.puts("no se pudo guardar en #{estado.archivo}: #{inspect(razon)}, se descarta")
+        estado
+    end
   end
 
   defp contar(estado, :duplicada) do
@@ -325,15 +365,10 @@ defmodule CpdDoc.Replica do
   end
 
   defp aplicar_remotas(ops, estado) do
-    case Historial.agregar(estado.fd, ops) do
-      :ok -> :ok
-      {:error, razon} -> IO.puts("no se pudo guardar en #{estado.archivo}: #{inspect(razon)}")
-    end
-
     doc = Enum.reduce(ops, estado.doc, fn op, doc -> Treedoc.aplicar(doc, op) end)
 
     for op <- ops do
-      difundir({:remote, op})
+      difundir(estado, {:remote, op})
     end
 
     anotar(%{estado | doc: doc, recibidas: estado.recibidas + length(ops)}, ops)
@@ -349,18 +384,26 @@ defmodule CpdDoc.Replica do
 
   defp enviar_historial(estado) do
     for op <- Enum.reverse(estado.historial) do
-      difundir({:remote, op})
+      difundir(estado, {:remote, op})
     end
 
     :ok
   end
 
-  defp difundir(mensaje) do
+  defp difundir(%{fuera: true}, _mensaje) do
+    :ok
+  end
+
+  defp difundir(_estado, mensaje) do
     for n <- Node.list() do
       GenServer.cast({Mensaje.nombre(), n}, mensaje)
     end
 
     :ok
+  end
+
+  defp marca_fuera(archivo) do
+    archivo <> ".fuera"
   end
 
   defp archivo() do

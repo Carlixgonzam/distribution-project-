@@ -69,6 +69,65 @@ defmodule CpdDoc.ReplicaTest do
     assert CpdDoc.estado().duplicadas == 1
   end
 
+  test "fuera de línea descarta lo remoto, sigue así tras reiniciar, y al unirse vuelve", %{
+    archivo: archivo
+  } do
+    start_supervised!(CpdDoc.Replica)
+    GenServer.cast(Crdt.Replica, {:remote, op(1, "h")})
+    assert CpdDoc.texto() == "h"
+
+    assert CpdDoc.unirse() == :ok
+    refute CpdDoc.estado().fuera
+
+    assert CpdDoc.salir() == :ok
+    assert CpdDoc.estado().fuera
+    assert File.exists?(archivo <> ".fuera")
+
+    GenServer.cast(Crdt.Replica, {:remote, op(2, "i")})
+    assert CpdDoc.texto() == "h"
+    assert CpdDoc.estado().descartadas == 1
+    assert CpdDoc.estado().reloj == %{x: 1}
+
+    stop_supervised!(CpdDoc.Replica)
+    start_supervised!(CpdDoc.Replica)
+    assert CpdDoc.estado().fuera
+    assert CpdDoc.texto() == "h"
+
+    assert CpdDoc.unirse() == :ok
+    refute CpdDoc.estado().fuera
+    refute File.exists?(archivo <> ".fuera")
+    GenServer.cast(Crdt.Replica, {:remote, op(2, "i")})
+    assert CpdDoc.texto() == "hi"
+  end
+
+  test "si no puede guardar una operación remota no la aplica (llegará otra vez)", %{
+    archivo: archivo
+  } do
+    pid = start_supervised!(CpdDoc.Replica)
+    {:ok, salida} = StringIO.open("")
+    Process.group_leader(pid, salida)
+    GenServer.cast(Crdt.Replica, {:remote, op(1, "h")})
+    assert CpdDoc.texto() == "h"
+
+    :sys.replace_state(Crdt.Replica, fn e ->
+      :file.close(e.fd)
+      e
+    end)
+
+    GenServer.cast(Crdt.Replica, {:remote, op(2, "i")})
+    assert CpdDoc.texto() == "h"
+    assert elem(StringIO.contents(salida), 1) =~ "no se pudo guardar"
+    assert CpdDoc.estado().reloj == %{x: 1}
+
+    :sys.replace_state(Crdt.Replica, fn e ->
+      {:ok, fd} = Historial.abrir(archivo)
+      %{e | fd: fd}
+    end)
+
+    GenServer.cast(Crdt.Replica, {:remote, op(2, "i")})
+    assert CpdDoc.texto() == "hi"
+  end
+
   test "al reiniciar reconstruye texto y reloj desde el log" do
     start_supervised!(CpdDoc.Replica)
     GenServer.cast(Crdt.Replica, {:remote, op(1, "h")})

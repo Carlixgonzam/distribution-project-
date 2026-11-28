@@ -11,6 +11,14 @@ defmodule CpdDoc.Red do
     {:ok, %{ip: nil}}
   end
 
+  def handle_call(_otra, _de, estado) do
+    {:reply, {:error, :desconocida}, estado}
+  end
+
+  def handle_cast(_otro, estado) do
+    {:noreply, estado}
+  end
+
   def handle_info(:revisar, estado) do
     direcciones = VintageNet.get(["interface", "wlan0", "addresses"], [])
     {:noreply, actualizar(ipv4(direcciones), estado)}
